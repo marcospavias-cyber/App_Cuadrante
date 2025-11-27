@@ -16,7 +16,7 @@ from datetime import timedelta
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V43.1")
+st.set_page_config(layout="wide", page_title="Gestor V43.2")
 
 TEAMS = ['A', 'B', 'C']
 ROLES = ["Jefe", "Subjefe", "Conductor", "Bombero"] 
@@ -137,7 +137,6 @@ def generate_night_template():
     out = io.BytesIO(); wb.save(out); out.seek(0)
     return out
 
-@st.cache_data
 def generate_base_schedule(year):
     is_leap = calendar.isleap(year)
     total_days = 366 if is_leap else 365
@@ -155,7 +154,6 @@ def is_in_night_period(day_idx, year, night_periods):
         if start <= current_date <= end: return True
     return False
 
-@st.cache_data
 def get_night_transition_dates(night_periods):
     dates = set()
     for start, end in night_periods:
@@ -234,13 +232,20 @@ def get_available_blocks_for_person(person_name, roster_df, current_requests, ye
 
     block_defs = STRATEGIES[strategy_key]['blocks']
     options = {b['label']: [] for b in block_defs}
-    for d in range(total_days - 15): 
+    
+    # CORRECCIÓN: Bucle completo para incluir diciembre
+    for d in range(total_days): 
         d_date = datetime.date(year, 1, 1) + timedelta(days=d)
         if not (start_month_idx <= d_date.month <= end_month_idx): continue
+
         for b_def in block_defs:
             duration = b_def['dur']
             target_cred = b_def['cred']
             label_key = b_def['label']
+            
+            # Check de desbordamiento del año
+            if d + duration > total_days: continue
+            
             if not check_global_conflict_generic(d, duration, person, occupation_map, base_sch, year, transition_dates):
                 overlap = False
                 for ms in my_current_slots:
@@ -295,7 +300,6 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key):
                     })
                     break 
         
-        # RELLENO HIDRÁULICO
         if credits_got < 13:
             all_days_random = list(range(total_days))
             random.shuffle(all_days_random)
@@ -315,7 +319,7 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key):
                             })
     return generated_requests
 
-# --- VISUALIZADOR DE MAPA DE CALOR (Global) ---
+# --- MAPA DE CALOR GLOBAL ---
 def render_global_occupation_calendar(year, roster_df, requests, night_periods):
     base_sch, total_days = generate_base_schedule(year)
     transition_dates = get_night_transition_dates(night_periods)
@@ -325,20 +329,17 @@ def render_global_occupation_calendar(year, roster_df, requests, night_periods):
     
     for req in requests:
         name = req['Nombre']
-        # Verificamos que el nombre exista en el roster actual (por seguridad)
         if name not in roster_df['Nombre'].values: continue
-        
         person_row = roster_df[roster_df['Nombre'] == name].iloc[0]
         turn = person_row['Turno']
         s = req['Inicio'].timetuple().tm_yday - 1
         e = req['Fin'].timetuple().tm_yday - 1
-        
         for d in range(s, e+1):
-            # Solo cuenta como "hueco ocupado" si es día de Guardia (T)
             if base_sch[turn][d] == 'T':
                 occ_map[d].append(get_short_id(name, person_row['Rol'], turn))
 
     html = "<div style='font-family:monospace; font-size:9px;'>"
+    
     html += """
     <div style='display:flex; gap:10px; margin-bottom:10px; font-size:11px; font-weight:bold;'>
         <span style='background:#d4edda; color:#155724; padding:2px 6px; border:1px solid #c3e6cb;'>🟩 DISPONIBLE</span>
@@ -364,18 +365,13 @@ def render_global_occupation_calendar(year, roster_df, requests, night_periods):
                 occupants = occ_map[d_idx]
                 count = len(occupants)
                 
-                if count == 0:
-                    bg = "#d4edda"; txt_col = "#155724" # Verde
-                elif count == 1:
-                    bg = "#FFF3CD"; txt_col = "#856404" # Naranja
-                else:
-                    bg = "#F8D7DA"; txt_col = "#721c24" # Rojo
+                if count == 0: bg = "#d4edda"; txt_col = "#155724"
+                elif count == 1: bg = "#FFF3CD"; txt_col = "#856404"
+                else: bg = "#F8D7DA"; txt_col = "#721c24"
 
                 border = "1px solid #fff"
                 if dt in transition_dates: border = "2px solid red"
-                
                 label = "<br>".join(occupants)
-                
                 html += f"<div style='width:32px; height:30px; background-color:{bg}; color:{txt_col}; text-align:center; border:{border}; border-radius:2px; font-size:8px; line-height:9px; display:flex; align-items:center; justify-content:center;'>{label}</div>"
             else:
                 html += "<div style='width:32px;'></div>"
@@ -385,6 +381,7 @@ def render_global_occupation_calendar(year, roster_df, requests, night_periods):
 
 def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=None):
     html = f"<div style='font-family:monospace; font-size:10px;'>"
+    
     html += """
     <div style='display:flex; gap:10px; margin-bottom:5px; font-size:11px; font-weight:bold;'>
         <span style='background:#d4edda; color:#155724; padding:2px 5px; border:1px solid #c3e6cb;'>T (Guardia)</span>
@@ -410,6 +407,7 @@ def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=
                 final_val = state
                 if custom_schedule: final_val = custom_schedule[d_idx]
                 bg_color = "#eee"; text_color = "#ccc"; border = "1px solid #fff"
+                
                 if final_val == 'T': 
                     bg_color = "#d4edda"; text_color = "#155724"
                     if is_in_night_period(d_idx, year, night_periods):
@@ -582,8 +580,8 @@ def find_adjustment_options(person_name, action_type, roster_df, year, night_per
 
 def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, night_periods, adjustments_log, strategy_key="standard"):
     wb = Workbook()
-    s_T = PatternFill("solid", fgColor="C6EFCE"); s_V = PatternFill("solid", fgColor="FFC000") # ORO
-    s_VR = PatternFill("solid", fgColor="FFFFE0"); s_Cov = PatternFill("solid", fgColor="FFC7CE") # CREMA
+    s_T = PatternFill("solid", fgColor="C6EFCE"); s_V = PatternFill("solid", fgColor="FFC000") # Oro
+    s_VR = PatternFill("solid", fgColor="FFFFE0"); s_Cov = PatternFill("solid", fgColor="FFC7CE") # Crema
     s_L = PatternFill("solid", fgColor="F2F2F2"); s_Night = PatternFill("solid", fgColor="A6A6A6")
     s_Extra = PatternFill("solid", fgColor="ADD8E6"); s_Free = PatternFill("solid", fgColor="E6E6FA")
     font_bold = Font(bold=True); font_red = Font(color="9C0006", bold=True)
@@ -618,9 +616,10 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
                         dt = datetime.date(year, m_idx+1, d); d_y = dt.timetuple().tm_yday - 1
                         st_val = schedule[nm][d_y]
                         fill = s_L; val = ""
+                        
                         if st_val == 'T': fill = s_T; val = "T"
-                        elif st_val == 'V': fill = s_V; val = "V" # ORO
-                        elif st_val == 'V(R)': fill = s_VR; val = "v" # CREMA
+                        elif st_val == 'V': fill = s_V; val = "V" # Oro
+                        elif st_val == 'V(R)': fill = s_VR; val = "v" # Crema
                         elif st_val.startswith('T*'): 
                             fill = s_Cov; cell.font = font_red
                             raw_name = st_val.split('(')[1][:-1]
@@ -628,6 +627,7 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
                             val = get_short_id(cov_p['Nombre'], cov_p['Rol'], cov_p['Turno'])
                         elif st_val == 'T+': fill = s_Extra; val = "T+"
                         elif st_val == 'L*': fill = s_Free; val = "L"
+                        
                         if is_in_night_period(d_y, year, night_periods): fill = s_Night
                         cell.fill = fill; cell.value = val
                     else: cell.fill = PatternFill("solid", fgColor="808080")
@@ -657,10 +657,10 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
     return out
 
 # ==============================================================================
-# INTERFAZ STREAMLIT (V43.1 - LOCAL + HEATMAP + VISUAL)
+# INTERFAZ STREAMLIT (V43.2 - LOCAL + HEATMAP + VISUAL)
 # ==============================================================================
 
-st.title("🚒 Gestor V43.1: Edición Local + Visual")
+st.title("🚒 Gestor V43.2: Edición Local + Visual")
 st.markdown("**Diseñado por Marcos Esteban Vives**")
 
 with st.expander("📘 MANUAL DE USUARIO (LÉEME)", expanded=True):
@@ -830,24 +830,25 @@ with c_main:
                                     st.session_state.locked_result = None 
                                     st.rerun()
 
-    st.markdown("---")
-    st.write(f"**Mis Periodos:**")
-    if not my_reqs: st.caption("Ninguno")
-    else:
-        for i, r in enumerate(my_reqs):
-            c1, c2 = st.columns([4, 1])
-            c1.write(f"{r['Inicio'].strftime('%d/%m')} - {r['Fin'].strftime('%d/%m')}")
-            if c2.button("🗑️", key=f"del_{selected_person}_{i}"):
-                current_requests.remove(r)
-                st.session_state.raw_requests_df = pd.DataFrame(current_requests)
-                st.session_state.locked_result = None
-                st.rerun()
+        st.markdown("---")
+        st.write(f"**Mis Periodos:**")
+        if not my_reqs: st.caption("Ninguno")
+        else:
+            for i, r in enumerate(my_reqs):
+                c1, c2 = st.columns([4, 1])
+                c1.write(f"{r['Inicio'].strftime('%d/%m')} - {r['Fin'].strftime('%d/%m')}")
+                if c2.button("🗑️", key=f"del_{selected_person}_{i}"):
+                    current_requests.remove(r)
+                    st.session_state.raw_requests_df = pd.DataFrame(current_requests)
+                    st.session_state.locked_result = None
+                    st.rerun()
 
 with c_vis:
     if selected_person:
         p_row = edited_df[edited_df['Nombre'] == selected_person].iloc[0]
         turn = p_row['Turno']
         st.subheader(f"3. Visor Turno {turn} ({selected_person})")
+        
         base_sch, _ = generate_base_schedule(year_val)
         temp_sch = base_sch[turn].copy()
         my_reqs = [r for r in current_requests if r['Nombre'] == selected_person]
