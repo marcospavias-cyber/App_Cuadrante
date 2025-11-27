@@ -16,7 +16,7 @@ from datetime import timedelta
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V43.5")
+st.set_page_config(layout="wide", page_title="Gestor V44.0 (Turbo)")
 
 TEAMS = ['A', 'B', 'C']
 ROLES = ["Jefe", "Subjefe", "Conductor", "Bombero"] 
@@ -114,26 +114,7 @@ DEFAULT_ROSTER = [
 ]
 
 # ==============================================================================
-# 2. INICIALIZACIÓN DE ESTADO (SAFETY FIRST)
-# ==============================================================================
-
-if 'roster_data' not in st.session_state:
-    st.session_state.roster_data = pd.DataFrame(DEFAULT_ROSTER)
-
-if 'raw_requests_df' not in st.session_state:
-    st.session_state.raw_requests_df = pd.DataFrame(columns=["Nombre", "Inicio", "Fin"])
-
-if 'forced_adjustments' not in st.session_state:
-    st.session_state.forced_adjustments = []
-
-if 'nights' not in st.session_state:
-    st.session_state.nights = []
-
-if 'locked_result' not in st.session_state:
-    st.session_state.locked_result = None
-
-# ==============================================================================
-# 3. DEFINICIÓN DE FUNCIONES
+# 2. DEFINICIÓN DE FUNCIONES (OPTIMIZADAS)
 # ==============================================================================
 
 def get_short_id(name, role, turn):
@@ -156,7 +137,7 @@ def generate_night_template():
     out = io.BytesIO(); wb.save(out); out.seek(0)
     return out
 
-@st.cache_data
+@st.cache_data # <--- ESTO ACELERA MUCHO
 def generate_base_schedule(year):
     is_leap = calendar.isleap(year)
     total_days = 366 if is_leap else 365
@@ -174,7 +155,7 @@ def is_in_night_period(day_idx, year, night_periods):
         if start <= current_date <= end: return True
     return False
 
-@st.cache_data
+@st.cache_data # <--- ESTO TAMBIÉN
 def get_night_transition_dates(night_periods):
     dates = set()
     for start, end in night_periods:
@@ -254,6 +235,7 @@ def get_available_blocks_for_person(person_name, roster_df, current_requests, ye
     block_defs = STRATEGIES[strategy_key]['blocks']
     options = {b['label']: [] for b in block_defs}
     
+    # Bucle hasta final de año
     for d in range(total_days): 
         d_date = datetime.date(year, 1, 1) + timedelta(days=d)
         if not (start_month_idx <= d_date.month <= end_month_idx): continue
@@ -263,8 +245,7 @@ def get_available_blocks_for_person(person_name, roster_df, current_requests, ye
             target_cred = b_def['cred']
             label_key = b_def['label']
             
-            # --- CORRECCIÓN DE DICIEMBRE ---
-            if d + duration > total_days: continue # Solo descartamos si se sale del año
+            if d + duration > total_days: continue
             
             if not check_global_conflict_generic(d, duration, person, occupation_map, base_sch, year, transition_dates):
                 overlap = False
@@ -320,6 +301,7 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key):
                     })
                     break 
         
+        # RELLENO HIDRÁULICO
         if credits_got < 13:
             all_days_random = list(range(total_days))
             random.shuffle(all_days_random)
@@ -339,10 +321,10 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key):
                             })
     return generated_requests
 
+# --- MAPA DE CALOR GLOBAL (V50 PORT) ---
 def render_global_occupation_calendar(year, roster_df, requests, night_periods):
     base_sch, total_days = generate_base_schedule(year)
     transition_dates = get_night_transition_dates(night_periods)
-    
     occ_map = {d: [] for d in range(total_days)}
     
     for req in requests:
@@ -353,7 +335,7 @@ def render_global_occupation_calendar(year, roster_df, requests, night_periods):
         s = req['Inicio'].timetuple().tm_yday - 1
         e = req['Fin'].timetuple().tm_yday - 1
         for d in range(s, e+1):
-            if d < total_days and base_sch[turn][d] == 'T': # Check index
+            if d < total_days and base_sch[turn][d] == 'T':
                 occ_map[d].append(get_short_id(name, person_row['Rol'], turn))
 
     html = "<div style='font-family:monospace; font-size:9px;'>"
@@ -378,10 +360,8 @@ def render_global_occupation_calendar(year, roster_df, requests, night_periods):
             if d <= days_in_month:
                 dt = datetime.date(year, m_num, d)
                 d_idx = dt.timetuple().tm_yday - 1
-                
                 occupants = occ_map[d_idx]
                 count = len(occupants)
-                
                 if count == 0: bg = "#d4edda"; txt_col = "#155724"
                 elif count == 1: bg = "#FFF3CD"; txt_col = "#856404"
                 else: bg = "#F8D7DA"; txt_col = "#721c24"
@@ -398,7 +378,6 @@ def render_global_occupation_calendar(year, roster_df, requests, night_periods):
 
 def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=None):
     html = f"<div style='font-family:monospace; font-size:10px;'>"
-    
     html += """
     <div style='display:flex; gap:10px; margin-bottom:5px; font-size:11px; font-weight:bold;'>
         <span style='background:#d4edda; color:#155724; padding:2px 5px; border:1px solid #c3e6cb;'>T (Guardia)</span>
@@ -421,29 +400,21 @@ def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=
                 dt = datetime.date(year, m_num, d)
                 d_idx = dt.timetuple().tm_yday - 1
                 
-                if d_idx >= len(base_sch[team]): continue # BLINDAJE INDICE
+                if d_idx >= len(base_sch[team]): continue
                 
                 state = base_sch[team][d_idx]
                 final_val = state
                 if custom_schedule: final_val = custom_schedule[d_idx]
-
                 bg_color = "#eee"; text_color = "#ccc"; border = "1px solid #fff"
-                
                 if final_val == 'T': 
                     bg_color = "#d4edda"; text_color = "#155724"
                     if is_in_night_period(d_idx, year, night_periods):
                         bg_color = "#1E7E34"; text_color = "white"
-                elif final_val == 'V':
-                    bg_color = "#FFC000"; text_color = "#000" # Oro
-                elif final_val == 'V(R)':
-                    bg_color = "#FFFFE0"; text_color = "#555" # Crema
-                elif final_val == 'T+':
-                    bg_color = "#ADD8E6"; text_color = "#000"
-                elif final_val == 'L*':
-                    bg_color = "#E6E6FA"; text_color = "#000"
-                
+                elif final_val == 'V': bg_color = "#FFC000"; text_color = "#000"
+                elif final_val == 'V(R)': bg_color = "#FFFFE0"; text_color = "#555"
+                elif final_val == 'T+': bg_color = "#ADD8E6"; text_color = "#000"
+                elif final_val == 'L*': bg_color = "#E6E6FA"; text_color = "#000"
                 if dt in get_night_transition_dates(night_periods): border = "2px solid red"
-
                 html += f"<div style='width:20px; background-color:{bg_color}; color:{text_color}; text-align:center; border:{border}; border-radius:2px;'>{state[0]}</div>"
             else:
                 html += "<div style='width:20px;'></div>"
@@ -604,8 +575,8 @@ def find_adjustment_options(person_name, action_type, roster_df, year, night_per
 
 def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, night_periods, adjustments_log, strategy_key="standard"):
     wb = Workbook()
-    s_T = PatternFill("solid", fgColor="C6EFCE"); s_V = PatternFill("solid", fgColor="FFC000") # Oro
-    s_VR = PatternFill("solid", fgColor="FFFFE0"); s_Cov = PatternFill("solid", fgColor="FFC7CE") # Crema
+    s_T = PatternFill("solid", fgColor="C6EFCE"); s_V = PatternFill("solid", fgColor="FFC000") # ORO
+    s_VR = PatternFill("solid", fgColor="FFFFE0"); s_Cov = PatternFill("solid", fgColor="FFC7CE") # CREMA
     s_L = PatternFill("solid", fgColor="F2F2F2"); s_Night = PatternFill("solid", fgColor="A6A6A6")
     s_Extra = PatternFill("solid", fgColor="ADD8E6"); s_Free = PatternFill("solid", fgColor="E6E6FA")
     font_bold = Font(bold=True); font_red = Font(color="9C0006", bold=True)
@@ -640,7 +611,6 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
                         dt = datetime.date(year, m_idx+1, d); d_y = dt.timetuple().tm_yday - 1
                         st_val = schedule[nm][d_y]
                         fill = s_L; val = ""
-                        
                         if st_val == 'T': fill = s_T; val = "T"
                         elif st_val == 'V': fill = s_V; val = "V" # Oro
                         elif st_val == 'V(R)': fill = s_VR; val = "v" # Crema
@@ -651,7 +621,6 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
                             val = get_short_id(cov_p['Nombre'], cov_p['Rol'], cov_p['Turno'])
                         elif st_val == 'T+': fill = s_Extra; val = "T+"
                         elif st_val == 'L*': fill = s_Free; val = "L"
-                        
                         if is_in_night_period(d_y, year, night_periods): fill = s_Night
                         cell.fill = fill; cell.value = val
                     else: cell.fill = PatternFill("solid", fgColor="808080")
@@ -681,284 +650,161 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
     return out
 
 # ==============================================================================
-# INTERFAZ STREAMLIT
+# INTERFAZ STREAMLIT (V44.0 - TURBO)
 # ==============================================================================
 
-st.title("🚒 Gestor V43.5: Edición Local + Mapa Global")
+st.title("🚒 Gestor V44.0: Edición Local + Turbo")
 st.markdown("**Diseñado por Marcos Esteban Vives**")
 
-with st.expander("📘 MANUAL DE USUARIO (LÉEME)", expanded=True):
-    st.markdown("""
-    ### 0️⃣ REVISA LA PLANTILLA
-    * Abre **"Plantilla"** (izquierda) y marca **SV** a los conductores.
-    
-    ### 1️⃣ CONFIGURACIÓN
-    * **Nocturnas:** Descarga plantilla y sube Excel.
-    
-    ### 2️⃣ ASIGNA VACACIONES
-    * Elige estrategia y usa el modo **Automático** o **Manual**.
-    * **Estrategia Francotirador:** Elige 13 días sueltos. La App agrupa visualmente (Oro/Crema).
-    
-    ### 3️⃣ EL NIVELADOR
-    * Pulsa "🔄 Calcular Resultados".
-    * Ajusta los días en el panel "Ajuste Fino" para llegar a 126-128.
-    """)
-
-# INICIALIZACIÓN DE ESTADO (CRUCIAL AL PRINCIPIO)
+# --- INITIALIZATION ---
 if 'nights' not in st.session_state: st.session_state.nights = []
 if 'roster_data' not in st.session_state: st.session_state.roster_data = pd.DataFrame(DEFAULT_ROSTER)
 if 'raw_requests_df' not in st.session_state: st.session_state.raw_requests_df = pd.DataFrame(columns=["Nombre", "Inicio", "Fin"])
 if 'forced_adjustments' not in st.session_state: st.session_state.forced_adjustments = []
-if 'locked_result' not in st.session_state: st.session_state.locked_result = None
+if 'computed_data' not in st.session_state: st.session_state.computed_data = None # Store heavy calculation results here
 
 current_requests = st.session_state.raw_requests_df.to_dict('records')
 year_val = 2026 
 
-# BARRA LATERAL
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("Configuración")
     year_val = st.number_input("Año", value=2026)
     
     with st.expander("Plantilla"):
-        column_cfg = {
-            "ID_Puesto": st.column_config.TextColumn(disabled=True),
-            "Turno": st.column_config.SelectboxColumn(options=TEAMS, required=True),
-            "Rol": st.column_config.SelectboxColumn(options=ROLES, required=True),
-            "SV": st.column_config.CheckboxColumn(label="¿Es SV?", help="Puede cubrir conductor", default=False)
-        }
-        edited_df = st.data_editor(
-            st.session_state.roster_data, 
-            column_config=column_cfg,
-            use_container_width=True,
-            key="roster_editor"
-        )
+        edited_df = st.data_editor(st.session_state.roster_data)
         st.session_state.roster_data = edited_df
         
     with st.expander("Nocturnas"):
-        c1, c2 = st.columns(2)
-        dn_s = c1.date_input("Inicio", key="n_s", value=None)
-        dn_e = c2.date_input("Fin", key="n_e", value=None)
-        if st.button("Añadir Nocturna"):
-            if dn_s and dn_e: st.session_state.nights.append((dn_s, dn_e))
-        st.write(f"Periodos: {len(st.session_state.nights)}")
-        
         uploaded_n = st.file_uploader("Excel Nocturnas", type=['xlsx'], key="n_up")
         if uploaded_n:
             try:
                 df_n = pd.read_excel(uploaded_n)
+                st.session_state.nights = []
                 for _, row in df_n.iterrows():
                         if not pd.isnull(row.iloc[0]):
-                            d1 = pd.to_datetime(row.iloc[0]).date()
-                            d2 = pd.to_datetime(row.iloc[1]).date()
-                            st.session_state.nights.append((d1, d2))
+                            st.session_state.nights.append((row.iloc[0].date(), row.iloc[1].date()))
                 st.success("Cargadas.")
             except: pass
         if st.button("Limpiar Nocturnas"): st.session_state.nights = []
 
     st.divider()
-    def on_strategy_change():
-        st.session_state.raw_requests_df = pd.DataFrame(columns=["Nombre", "Inicio", "Fin"])
-        st.session_state.forced_adjustments = [] 
-        st.session_state.locked_result = None 
-        st.toast("⚠️ Estrategia cambiada: Reinicio completo.", icon="🗑️")
-
-    strategy_key = st.selectbox("🎯 Estrategia de Vacaciones", options=list(STRATEGIES.keys()), format_func=lambda x: STRATEGIES[x]['name'], on_change=on_strategy_change)
-    st.info(STRATEGIES[strategy_key]['desc'])
-
-    if st.button("🎲 Generar Automático (Sobrescribe)", type="primary"):
-        with st.spinner("Generando..."):
-            new_reqs = auto_generate_schedule(edited_df, year_val, st.session_state.nights, strategy_key)
-            st.session_state.raw_requests_df = pd.DataFrame(new_reqs)
-            st.session_state.forced_adjustments = []
-            st.session_state.locked_result = None 
-        st.success("¡Hecho!")
+    strategy_key = st.selectbox("🎯 Estrategia de Vacaciones", options=list(STRATEGIES.keys()), format_func=lambda x: STRATEGIES[x]['name'])
+    
+    if st.button("🎲 Generar Automático", type="primary"):
+        new_reqs = auto_generate_schedule(edited_df, year_val, st.session_state.nights, strategy_key)
+        st.session_state.raw_requests_df = pd.DataFrame(new_reqs)
+        st.session_state.computed_data = None # Invalidate cache
         st.rerun()
 
-# CALCULAR STATS
+# --- CALCULATION (LIGHTWEIGHT) ---
 stats = calculate_stats(edited_df, current_requests, year_val)
 
-# VISUALIZACIÓN
+# --- MAIN AREA ---
+
+# MAPA DE CALOR
+st.subheader("🌍 Ocupación Global")
+st.markdown(render_global_occupation_calendar(year_val, edited_df, current_requests, st.session_state.nights), unsafe_allow_html=True)
+
 st.divider()
 
-# --- MAPA DE CALOR GLOBAL ---
-st.subheader("🌍 Ocupación Global (Quién falta)")
-st.markdown(render_global_occupation_calendar(year_val, st.session_state.roster_data, current_requests, st.session_state.nights), unsafe_allow_html=True)
-
-st.divider()
-
-# --- SELECCIÓN MANUAL ---
+# SELECCIÓN MANUAL
 c_main, c_vis = st.columns([1, 2])
-
 with c_main:
     st.subheader("2. Selección Manual")
     all_names = edited_df['Nombre'].tolist()
-    names_sorted = sorted(all_names, key=lambda x: (0 if "Jefe" in x else 1 if "Subjefe" in x else 2 if "Cond" in x else 3))
-    selected_person = st.selectbox("Selecciona Trabajador:", names_sorted)
+    selected_person = st.selectbox("Selecciona Trabajador:", all_names)
     
     if selected_person:
-        st.markdown("---")
-        curr_stats = stats.get(selected_person, {'credits': 0, 'natural': 0})
-        c = curr_stats['credits']
-        remaining = 13 - c
-        st.metric("Créditos Totales", f"{c} / 13", delta=remaining, delta_color="normal")
+        curr_stats = stats.get(selected_person, {'credits': 0})
+        st.metric("Créditos", f"{curr_stats['credits']} / 13")
         
+        month_range = st.select_slider("Filtrar Meses", options=MESES, value=(MESES[0], MESES[-1]))
+        options = get_available_blocks_for_person(selected_person, edited_df, current_requests, year_val, st.session_state.nights, month_range, strategy_key)
+        
+        # Botones de añadir (Optimizados: invalidan cache)
+        for lbl, slots in options.items():
+            with st.expander(lbl):
+                for s in slots[:10]: # Limit visual clutter
+                    if st.button(f"➕ {s['label']}", key=f"add_{selected_person}_{s['start']}"):
+                        current_requests.append({"Nombre": selected_person, "Inicio": s['start'], "Fin": s['end']})
+                        st.session_state.raw_requests_df = pd.DataFrame(current_requests)
+                        st.session_state.computed_data = None # FORCE RECALC
+                        st.rerun()
+        
+        # Botones de borrar
+        st.write("**Mis Vacaciones:**")
         my_reqs = [r for r in current_requests if r['Nombre'] == selected_person]
-        
-        # Puzzle visual
-        recipe = STRATEGIES[strategy_key]['auto_recipe']
-        req_counts = {}
-        for item in recipe: req_counts[(item['dur'], item['target'])] = req_counts.get((item['dur'], item['target']), 0) + 1
-        
-        base_sch_temp, _ = generate_base_schedule(year_val)
-        person_row = edited_df[edited_df['Nombre'] == selected_person].iloc[0]
-        
-        curr_counts = {}
-        for r in my_reqs:
-            dur = (r['Fin'] - r['Inicio']).days + 1
-            s_idx = r['Inicio'].timetuple().tm_yday - 1
-            cred_block = 0
-            for d in range(s_idx, s_idx + dur):
-                if base_sch_temp[person_row['Turno']][d] == 'T': cred_block += 1
-            curr_counts[(dur, cred_block)] = curr_counts.get((dur, cred_block), 0) + 1
-        
-        sorted_keys = sorted(req_counts.keys(), key=lambda x: (-x[0], -x[1]))
-        cols_puzzle = st.columns(len(sorted_keys))
-        for idx, k in enumerate(sorted_keys):
-            dur, cred = k
-            total_needed = req_counts[k]
-            have = curr_counts.get(k, 0)
-            icon = "✅" if have >= total_needed else "⏳"
-            with cols_puzzle[idx]:
-                st.caption(f"{dur}d ({cred} Cr)")
-                st.markdown(f"### {icon} {have}/{total_needed}")
-
-        st.divider()
-        if remaining <= 0:
-            st.success("✅ Cupo cubierto.")
-        else:
-            month_range = st.select_slider("📅 Filtrar Meses:", options=MESES, value=(MESES[0], MESES[-1]))
-            st.info(f"🔍 Buscando fichas disponibles...")
-            options = get_available_blocks_for_person(selected_person, st.session_state.roster_data, current_requests, year_val, st.session_state.nights, month_range, strategy_key)
-            block_defs = STRATEGIES[strategy_key]['blocks']
-            tabs = st.tabs([b['label'] for b in block_defs])
-            for i, b_def in enumerate(block_defs):
-                key = b_def['label']
-                with tabs[i]:
-                    available_opts = options.get(key, [])
-                    if not available_opts: st.warning("Sin opciones.")
-                    else:
-                        with st.container(height=200):
-                            for opt in available_opts[:20]: 
-                                if st.button(f"➕ {opt['label']}", key=f"add_{selected_person}_{opt['start']}_{i}"):
-                                    current_requests.append({"Nombre": selected_person, "Inicio": opt['start'], "Fin": opt['end']})
-                                    st.session_state.raw_requests_df = pd.DataFrame(current_requests)
-                                    st.session_state.locked_result = None 
-                                    st.rerun()
-
-        st.markdown("---")
-        st.write(f"**Mis Periodos:**")
-        if not my_reqs: st.caption("Ninguno")
-        else:
-            for i, r in enumerate(my_reqs):
-                c1, c2 = st.columns([4, 1])
-                c1.write(f"{r['Inicio'].strftime('%d/%m')} - {r['Fin'].strftime('%d/%m')}")
-                if c2.button("🗑️", key=f"del_{selected_person}_{i}"):
-                    current_requests.remove(r)
-                    st.session_state.raw_requests_df = pd.DataFrame(current_requests)
-                    st.session_state.locked_result = None
-                    st.rerun()
+        for i, r in enumerate(my_reqs):
+             c1, c2 = st.columns([4, 1])
+             c1.write(f"{r['Inicio']} - {r['Fin']}")
+             if c2.button("🗑️", key=f"del_{i}"):
+                 current_requests.remove(r)
+                 st.session_state.raw_requests_df = pd.DataFrame(current_requests)
+                 st.session_state.computed_data = None # FORCE RECALC
+                 st.rerun()
 
 with c_vis:
     if selected_person:
         p_row = edited_df[edited_df['Nombre'] == selected_person].iloc[0]
-        turn = p_row['Turno']
-        st.subheader(f"3. Visor Turno {turn} ({selected_person})")
+        # Visor ligero (solo muestra peticiones, no recalcula todo el cuadrante)
+        base_sch, _ = generate_base_schedule(year_val)
+        temp_sch = base_sch[p_row['Turno']].copy()
+        for r in [req for req in current_requests if req['Nombre'] == selected_person]:
+             s = r['Inicio'].timetuple().tm_yday - 1
+             e = r['Fin'].timetuple().tm_yday - 1
+             for d in range(s, e+1): temp_sch[d] = 'V'
         
-        base_sch, _ = generate_base_schedule(year_val)
-        temp_sch = base_sch[turn].copy()
-        my_reqs = [r for r in current_requests if r['Nombre'] == selected_person]
-        for r in my_reqs:
-            s = r['Inicio'].timetuple().tm_yday - 1
-            e = r['Fin'].timetuple().tm_yday - 1
-            for d in range(s, e+1):
-                if temp_sch[d] == 'T': temp_sch[d] = 'V' 
-                else: temp_sch[d] = 'V(R)'
+        st.subheader(f"Calendario de {selected_person}")
+        st.markdown(render_annual_calendar(year_val, p_row['Turno'], base_sch, st.session_state.nights, temp_sch), unsafe_allow_html=True)
 
-        if strategy_key == 'sniper':
-                for d in range(len(temp_sch) - 2):
-                    if temp_sch[d] == 'V' and temp_sch[d+1] == 'L': temp_sch[d+1] = 'V(R)'
-                    if temp_sch[d] == 'V' and temp_sch[d+1] == 'V(R)' and temp_sch[d+2] == 'L': temp_sch[d+2] = 'V(R)'
-
-        st.markdown(render_annual_calendar(year_val, turn, base_sch, st.session_state.nights, temp_sch), unsafe_allow_html=True)
-    else:
-        st.subheader("3. Visor Global")
-        base_sch, _ = generate_base_schedule(year_val)
-        st.markdown(render_annual_calendar(year_val, 'A', base_sch, st.session_state.nights), unsafe_allow_html=True)
-
-# --- PANEL DE AJUSTE FINO ---
+# --- CÁLCULO PESADO BAJO DEMANDA ---
 st.divider()
-st.header("⚙️ Ajuste Fino y Descarga")
+st.header("⚙️ Generación Final y Descarga")
 
-if st.button("🔄 Calcular/Actualizar Resultados", type="primary"):
-    with st.spinner("Calculando cuadrante final..."):
+col_act, col_status = st.columns([1, 3])
+if col_act.button("🔄 CALCULAR RESULTADOS", type="primary"):
+    with st.spinner("Procesando coberturas y ajustes..."):
         sch, adj, count, fill = validate_and_generate_final(edited_df, current_requests, year_val, st.session_state.nights, st.session_state.forced_adjustments, strategy_key)
         excel_io = create_final_excel(sch, edited_df, year_val, current_requests, fill, count, st.session_state.nights, adj, strategy_key)
         work_days = get_work_days_count(sch)
-        st.session_state.locked_result = {
+        st.session_state.computed_data = {
             "sch": sch, "adj": adj, "work_days": work_days, "excel": excel_io
         }
-    st.success("¡Resultados actualizados!")
+    st.success("¡Calculado!")
 
-if st.session_state.locked_result:
-    res = st.session_state.locked_result
+# MOSTRAR RESULTADOS SI EXISTEN
+if st.session_state.computed_data:
+    data = st.session_state.computed_data
     
-    cols_eq = st.columns(3)
-    for i, (name, count) in enumerate(res['work_days'].items()):
-        with cols_eq[i % 3]:
-            color = "green" if MIN_WORK_DAYS <= count <= MAX_WORK_DAYS else "red"
-            st.markdown(f"**{name}**: <span style='color:{color}'>{count} días</span>", unsafe_allow_html=True)
+    # Semáforos
+    cols = st.columns(4)
+    for i, (name, d) in enumerate(data['work_days'].items()):
+        color = "green" if 121 <= d <= 123 else "red" # Ajustar rango si quieres
+        cols[i%4].markdown(f"**{name}**: :{color}[{d}]")
     
-    st.divider()
-    col_poor, col_rich = st.columns(2)
-    with col_poor:
-        st.subheader(f"📉 Falta Jornada (<{MIN_WORK_DAYS})")
-        poor_people = [n for n, c in res['work_days'].items() if c < MIN_WORK_DAYS]
-        if not poor_people: st.success("Nadie necesita añadir.")
-        else:
-            p_select = st.selectbox("Seleccionar:", poor_people, key="sel_poor")
-            if p_select:
-                opts = find_adjustment_options(p_select, 'add', edited_df, year_val, st.session_state.nights, res['sch'])
-                if opts:
-                    day_opt = st.selectbox("Días Disponibles:", options=opts, format_func=lambda x: x['label'], key="opt_add")
-                    if st.button(f"➕ Añadir a {p_select}"):
-                        st.session_state.forced_adjustments.append({'day_idx': day_opt['day_idx'], 'person': p_select, 'type': 'add'})
-                        st.session_state.locked_result = None 
-                        st.rerun()
+    # Panel Ajuste
+    c_a, c_b = st.columns(2)
+    with c_a:
+        p_sel = st.selectbox("Añadir Guardia a:", list(data['work_days'].keys()), key="p_add")
+        opts = find_adjustment_options(p_sel, 'add', edited_df, year_val, st.session_state.nights, data['sch'])
+        if opts:
+            d_opt = st.selectbox("Día:", options=opts, format_func=lambda x: x['label'], key="d_add")
+            if st.button("➕ Confirmar"):
+                st.session_state.forced_adjustments.append({'day_idx': d_opt['day_idx'], 'person': p_sel, 'type': 'add'})
+                st.session_state.computed_data = None # Force recalc next time
+                st.rerun()
+    
+    with c_b:
+        p_rem = st.selectbox("Quitar Guardia a:", list(data['work_days'].keys()), key="p_rem")
+        opts_r = find_adjustment_options(p_rem, 'remove', edited_df, year_val, st.session_state.nights, data['sch'])
+        if opts_r:
+            d_opt_r = st.selectbox("Día:", options=opts_r, format_func=lambda x: x['label'], key="d_rem")
+            if st.button("➖ Confirmar"):
+                st.session_state.forced_adjustments.append({'day_idx': d_opt_r['day_idx'], 'person': p_rem, 'type': 'remove'})
+                st.session_state.computed_data = None
+                st.rerun()
 
-    with col_rich:
-        st.subheader(f"📈 Sobra Jornada (>{MAX_WORK_DAYS})")
-        rich_people = [n for n, c in res['work_days'].items() if c > MAX_WORK_DAYS]
-        if not rich_people: st.success("Nadie necesita quitar.")
-        else:
-            r_select = st.selectbox("Seleccionar:", rich_people, key="sel_rich")
-            if r_select:
-                opts = find_adjustment_options(r_select, 'remove', edited_df, year_val, st.session_state.nights, res['sch'])
-                if opts:
-                    day_opt = st.selectbox("Días Disponibles:", options=opts, format_func=lambda x: x['label'], key="opt_rem")
-                    if st.button(f"➖ Quitar a {r_select}"):
-                        st.session_state.forced_adjustments.append({'day_idx': day_opt['day_idx'], 'person': r_select, 'type': 'remove'})
-                        st.session_state.locked_result = None
-                        st.rerun()
-
-    st.divider()
-    st.download_button(
-        "📥 Descargar Cuadrante Final",
-        data=res['excel'],
-        file_name=f"Cuadrante_Final_{year_val}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="primary"
-    )
-    st.markdown("**Diseñado por Marcos Esteban Vives**")
-    st.caption("Asistente de programación. Esta información tiene un carácter meramente informativo. Para obtener asesoramiento o diagnóstico médicos, consulta a un profesional.")
+    st.download_button("📥 Descargar Excel", data['excel'], "Cuadrante_Final.xlsx")
 else:
-    st.info("Pulsa 'Calcular/Actualizar Resultados' para ver el estado de la plantilla y descargar.")
+    st.info("Pulsa el botón para calcular el cuadrante completo.")
