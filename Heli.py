@@ -13,13 +13,13 @@ from operator import itemgetter
 from datetime import timedelta
 
 # ==============================================================================
-# 1. CONFIGURACIÓN Y CONSTANTES (ADAPTADO A UBH)
+# 1. CONFIGURACIÓN Y CONSTANTES (UBH FLEXIBLE)
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor UBH V54.0")
+st.set_page_config(layout="wide", page_title="Gestor UBH V55.0")
 
 TEAMS = ['A', 'B', 'C']
-# CAMBIO: Roles específicos de Helitransportada
+# Roles Base (El Polivalente es un atributo extra, no un rol base excluyente)
 ROLES = ["Capataz", "2º Capataz", "Bombero"] 
 MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
 
@@ -74,7 +74,7 @@ STRATEGIES = {
     },
     "sniper": {
         "name": "🎯 Francotirador (13 días)",
-        "desc": "13 días sueltos de guardia.",
+        "desc": "Eliges tus 13 guardias una a una.",
         "blocks": [ {"dur": 1, "cred": 1, "label": "Día Suelto (1 Cr)"} ],
         "auto_recipe": [{"dur": 1, "target": 1}] * 13
     },
@@ -93,29 +93,28 @@ STRATEGIES = {
     }
 }
 
-# Plantilla por defecto ADAPTADA A UBH
-# Asumimos una estructura típica de 6 pax por turno: 1 Capataz, 1 2º Capataz, 4 Bomberos
+# Plantilla por defecto (Poli es ahora un Checkbox True/False)
 DEFAULT_ROSTER = [
-    {"ID_Puesto": "Capataz A",    "Nombre": "Capataz A",    "Turno": "A", "Rol": "Capataz",    "SV": False},
-    {"ID_Puesto": "2º Cap A",     "Nombre": "2º Cap A",     "Turno": "A", "Rol": "2º Capataz", "SV": False},
-    {"ID_Puesto": "Bombero A1",   "Nombre": "Bombero A1",   "Turno": "A", "Rol": "Bombero",    "SV": False},
-    {"ID_Puesto": "Bombero A2",   "Nombre": "Bombero A2",   "Turno": "A", "Rol": "Bombero",    "SV": False},
-    {"ID_Puesto": "Bombero A3",   "Nombre": "Bombero A3",   "Turno": "A", "Rol": "Bombero",    "SV": False},
-    {"ID_Puesto": "Bombero A4",   "Nombre": "Bombero A4",   "Turno": "A", "Rol": "Bombero",    "SV": False},
+    {"ID_Puesto": "Capataz A",    "Nombre": "Capataz A",    "Turno": "A", "Rol": "Capataz",    "Poli": False},
+    {"ID_Puesto": "2º Cap A",     "Nombre": "2º Cap A",     "Turno": "A", "Rol": "2º Capataz", "Poli": False},
+    {"ID_Puesto": "Bombero A1",   "Nombre": "Bombero A1",   "Turno": "A", "Rol": "Bombero",    "Poli": True}, # Ejemplo Poli
+    {"ID_Puesto": "Bombero A2",   "Nombre": "Bombero A2",   "Turno": "A", "Rol": "Bombero",    "Poli": False},
+    {"ID_Puesto": "Bombero A3",   "Nombre": "Bombero A3",   "Turno": "A", "Rol": "Bombero",    "Poli": False},
+    {"ID_Puesto": "Bombero A4",   "Nombre": "Bombero A4",   "Turno": "A", "Rol": "Bombero",    "Poli": False},
     
-    {"ID_Puesto": "Capataz B",    "Nombre": "Capataz B",    "Turno": "B", "Rol": "Capataz",    "SV": False},
-    {"ID_Puesto": "2º Cap B",     "Nombre": "2º Cap B",     "Turno": "B", "Rol": "2º Capataz", "SV": False},
-    {"ID_Puesto": "Bombero B1",   "Nombre": "Bombero B1",   "Turno": "B", "Rol": "Bombero",    "SV": False},
-    {"ID_Puesto": "Bombero B2",   "Nombre": "Bombero B2",   "Turno": "B", "Rol": "Bombero",    "SV": False},
-    {"ID_Puesto": "Bombero B3",   "Nombre": "Bombero B3",   "Turno": "B", "Rol": "Bombero",    "SV": False},
-    {"ID_Puesto": "Bombero B4",   "Nombre": "Bombero B4",   "Turno": "B", "Rol": "Bombero",    "SV": False},
+    {"ID_Puesto": "Capataz B",    "Nombre": "Capataz B",    "Turno": "B", "Rol": "Capataz",    "Poli": False},
+    {"ID_Puesto": "2º Cap B",     "Nombre": "2º Cap B",     "Turno": "B", "Rol": "2º Capataz", "Poli": False},
+    {"ID_Puesto": "Bombero B1",   "Nombre": "Bombero B1",   "Turno": "B", "Rol": "Bombero",    "Poli": True},
+    {"ID_Puesto": "Bombero B2",   "Nombre": "Bombero B2",   "Turno": "B", "Rol": "Bombero",    "Poli": False},
+    {"ID_Puesto": "Bombero B3",   "Nombre": "Bombero B3",   "Turno": "B", "Rol": "Bombero",    "Poli": False},
+    {"ID_Puesto": "Bombero B4",   "Nombre": "Bombero B4",   "Turno": "B", "Rol": "Bombero",    "Poli": False},
 
-    {"ID_Puesto": "Capataz C",    "Nombre": "Capataz C",    "Turno": "C", "Rol": "Capataz",    "SV": False},
-    {"ID_Puesto": "2º Cap C",     "Nombre": "2º Cap C",     "Turno": "C", "Rol": "2º Capataz", "SV": False},
-    {"ID_Puesto": "Bombero C1",   "Nombre": "Bombero C1",   "Turno": "C", "Rol": "Bombero",    "SV": False},
-    {"ID_Puesto": "Bombero C2",   "Nombre": "Bombero C2",   "Turno": "C", "Rol": "Bombero",    "SV": False},
-    {"ID_Puesto": "Bombero C3",   "Nombre": "Bombero C3",   "Turno": "C", "Rol": "Bombero",    "SV": False},
-    {"ID_Puesto": "Bombero C4",   "Nombre": "Bombero C4",   "Turno": "C", "Rol": "Bombero",    "SV": False},
+    {"ID_Puesto": "Capataz C",    "Nombre": "Capataz C",    "Turno": "C", "Rol": "Capataz",    "Poli": False},
+    {"ID_Puesto": "2º Cap C",     "Nombre": "2º Cap C",     "Turno": "C", "Rol": "2º Capataz", "Poli": False},
+    {"ID_Puesto": "Bombero C1",   "Nombre": "Bombero C1",   "Turno": "C", "Rol": "Bombero",    "Poli": True},
+    {"ID_Puesto": "Bombero C2",   "Nombre": "Bombero C2",   "Turno": "C", "Rol": "Bombero",    "Poli": False},
+    {"ID_Puesto": "Bombero C3",   "Nombre": "Bombero C3",   "Turno": "C", "Rol": "Bombero",    "Poli": False},
+    {"ID_Puesto": "Bombero C4",   "Nombre": "Bombero C4",   "Turno": "C", "Rol": "Bombero",    "Poli": False},
 ]
 
 # ==============================================================================
@@ -129,7 +128,6 @@ def get_short_id(name, role, turn):
         parts = name.split()
         if len(parts) > 1:
             suffix = parts[-1]
-            # Intenta coger B1, B2...
             if len(suffix) >= 2:
                 return f"B{suffix[-1]}{turn}"
     return f"{name[:3]}{turn}"
@@ -200,32 +198,31 @@ def get_clustered_dates(available_idxs, needed_count):
         else: break
     return sorted(selected)
 
-# --- VALIDACIÓN DE CONFLICTOS ADAPTADA A UBH ---
+# --- VALIDACIÓN CONFLICTOS UBH (POLIVALENTES LIBRES) ---
 def check_global_conflict_generic(start_idx, duration, person, occupation_map, base_sch, year, transition_dates):
     total_days = len(base_sch['A'])
-    if start_idx + duration > total_days: return True # No salirse del año
+    if start_idx + duration > total_days: return True 
 
     for i in range(start_idx, start_idx + duration):
         d_obj = datetime.date(year, 1, 1) + timedelta(days=i)
         
-        # 1. Norma Nocturna (Común)
+        # 1. Nocturna
         if d_obj in transition_dates:
             if base_sch[person['Turno']][i] == 'T': return True
         
         occupants = occupation_map.get(i, [])
         
-        # 2. Norma Máximo 2 personas
+        # 2. Máx 2 personas
         if len(occupants) >= 2: return True
         
         for occ in occupants:
-            # 3. Norma Turno: Nunca mismo turno
+            # 3. Mismo turno prohibido
             if occ['Turno'] == person['Turno']: return True
             
-            # 4. Norma Categoría (ESPECÍFICA UBH)
-            # Capataces y 2º Capataces NO pueden coincidir con su misma categoría
-            if person['Rol'] != 'Bombero' and occ['Rol'] == person['Rol']:
-                return True
-            # Bomberos: SÍ pueden coincidir (si son de distinto turno, ya chequeado arriba)
+            # 4. Categoría (Relax para Bomberos/Poli)
+            if person['Rol'] == 'Capataz' and occ['Rol'] == 'Capataz': return True
+            if person['Rol'] == '2º Capataz' and occ['Rol'] == '2º Capataz': return True
+            # Bomberos (y Polis que son bomberos) pueden coincidir
 
     return False
 
@@ -255,7 +252,6 @@ def get_available_blocks_for_person(person_name, roster_df, current_requests, ye
     block_defs = STRATEGIES[strategy_key]['blocks']
     options = {b['label']: [] for b in block_defs}
     
-    # Escaneo hasta final de año
     for d in range(total_days): 
         d_date = datetime.date(year, 1, 1) + timedelta(days=d)
         if not (start_month_idx <= d_date.month <= end_month_idx): continue
@@ -288,7 +284,7 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key):
     occupation_map = {} 
     generated_requests = []
     people = roster_df.to_dict('records')
-    # Prioridad: Capataz > 2Cap > Bombero (para asegurar que los mandos cogen primero por ser más restrictivos)
+    # Prioridad: Capataz > 2º Cap > Bombero (Polis incluidos aqui)
     priority_order = ["Capataz", "2º Capataz", "Bombero"]
     people.sort(key=lambda x: priority_order.index(x['Rol']))
     RECIPE = STRATEGIES[strategy_key]['auto_recipe']
@@ -446,7 +442,7 @@ def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=
     html += "</div>"
     return html
 
-# --- LÓGICA DE COBERTURAS UBH ---
+# --- LÓGICA DE COBERTURAS (MATCHMAKING) UBH + POLIVALENTE ---
 def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, night_periods, adjustments_log_current_day=None):
     candidates = []
     missing_role = person_missing['Rol']
@@ -468,28 +464,25 @@ def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, n
                     turn_exhausted_from_night = t; break
 
     for _, candidate in roster_df.iterrows():
-        # Filtros base
-        if candidate['Turno'] == missing_turn: continue # Mismo turno no cubre
+        if candidate['Turno'] == missing_turn: continue
         cand_status = current_schedule[candidate['Nombre']][day_idx]
-        if cand_status != 'L': continue # Debe estar libre
+        if cand_status != 'L': continue
         
-        # Filtro refuerzo simultaneo del mismo turno
-        if candidate['Turno'] in blocked_turns: continue 
-        
-        # Filtro Anti-24h
+        if candidate['Turno'] in blocked_turns: continue
         if turn_exhausted_from_night and candidate['Turno'] == turn_exhausted_from_night: continue
 
-        # LÓGICA DE ROLES UBH (Cruces)
+        # LÓGICA DE ROLES UBH + POLIVALENTE (Checkbox)
         is_compatible = False
         cand_role = candidate['Rol']
+        is_poli = candidate['Poli'] # Checkbox
         
         if missing_role == "Capataz":
-            if cand_role in ["Capataz", "2º Capataz"]: is_compatible = True
+            if cand_role in ["Capataz", "2º Capataz"] or is_poli: is_compatible = True
         elif missing_role == "2º Capataz":
-            if cand_role in ["Capataz", "2º Capataz"]: is_compatible = True
+            if cand_role in ["Capataz", "2º Capataz"] or is_poli: is_compatible = True
         elif missing_role == "Bombero":
-            if cand_role == "Bombero": is_compatible = True
-        
+            if cand_role == "Bombero": is_compatible = True # Poli es bombero tb
+            
         if is_compatible: candidates.append(candidate['Nombre'])
     return candidates
 
@@ -500,6 +493,12 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, forced
     turn_coverage_counters = {'A': 0, 'B': 0, 'C': 0}
     person_coverage_counters = {name: 0 for name in roster_df['Nombre']}
     name_to_turn = {row['Nombre']: row['Turno'] for _, row in roster_df.iterrows()}
+    
+    # Carga base para nivelador
+    base_work_load = {}
+    for _, row in roster_df.iterrows():
+        base_t_count = base_schedule_turn[row['Turno']].count('T')
+        base_work_load[row['Nombre']] = base_t_count - 13
     
     for _, row in roster_df.iterrows():
         final_schedule[row['Nombre']] = base_schedule_turn[row['Turno']].copy()
@@ -525,8 +524,6 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, forced
         absent_people = day_vacations[d]
         if not absent_people: continue
         current_day_coverers = []
-        
-        # Prioridad: Cubrir primero a los Mandos (son más difíciles)
         absent_people.sort(key=lambda x: 0 if "Capataz" in x else 1)
 
         for name_missing in absent_people:
@@ -539,7 +536,10 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, forced
                     prev2 = final_schedule[c][d-2] if d>1 else 'L'
                     if not (prev.startswith('T') and prev2.startswith('T')): valid.append(c)
                 if valid:
-                    valid.sort(key=lambda x: (turn_coverage_counters[name_to_turn[x]], person_coverage_counters[x], random.random()))
+                    valid.sort(key=lambda x: (
+                        base_work_load[x] + person_coverage_counters[x],
+                        random.random()
+                    ))
                     chosen = valid[0]
                     final_schedule[chosen][d] = f"T*({name_missing})"
                     adjustments_log.append((d, chosen, name_missing))
@@ -635,7 +635,7 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
         curr_row += 2
         members = roster_df[roster_df['Turno'] == t].copy()
         role_order = ["Capataz", "2º Capataz", "Bombero"]
-        members['sort_key'] = members['Rol'].apply(lambda x: role_order.index(x))
+        members['sort_key'] = members['Rol'].apply(lambda x: role_order.index(x) if x in role_order else 99)
         members = members.sort_values(by=['sort_key', 'Nombre'])
         for _, p in members.iterrows():
             nm = p['Nombre']; role = p['Rol']
@@ -652,8 +652,7 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
                         st_val = schedule[nm][d_y]
                         fill = s_L; val = ""
                         if st_val == 'T': fill = s_T; val = "T"
-                        elif st_val == 'V': 
-                            fill = s_V; val = "V"
+                        elif st_val == 'V': fill = s_V; val = "V"
                         elif st_val == 'V(R)': 
                             fill = s_VR; val = "v"
                             if strategy_key == 'sniper': fill = s_V; val = "V" 
@@ -696,20 +695,18 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
 # INTERFAZ STREAMLIT
 # ==============================================================================
 
-st.title("🚁 Gestor V54.0: UBH Helitransportada")
-st.markdown("**Adaptación por Marcos Esteban Vives**")
+st.title("🚁 Gestor UBH V55.0: Flexible + Polivalente")
+st.markdown("**Diseñado por Marcos Esteban Vives**")
 
 with st.expander("📘 MANUAL UBH (LÉEME)", expanded=True):
     st.markdown("""
-    ### 🚁 Normas Específicas UBH
+    ### 🚁 Normas UBH
     * **Roles:** Capataz, 2º Capataz, Bombero.
-    * **Conflicto Estricto:** Máx 2 personas de vacaciones, pero **NUNCA** de la misma categoría (salvo Bomberos).
-    * **Coberturas Cruzadas:**
-        * Capataz ↔️ 2º Capataz
-        * Bombero ↔️ Bombero
+    * **Polivalente:** Es una acreditación (Checkbox). Permite cubrir a Mandos y Bomberos.
+    * **Conflictos:** Relax para Bomberos. Estricto para Mandos.
     
     ### 0️⃣ REVISA LA PLANTILLA
-    * Asegúrate de que los roles (Capataz/2º Capataz) están bien asignados.
+    * Marca la casilla **¿Es Poli?** a quien tenga la acreditación.
     
     ### 1️⃣ CONFIGURACIÓN
     * **Nocturnas:** Descarga plantilla y sube Excel.
@@ -741,7 +738,7 @@ with st.sidebar:
             "ID_Puesto": st.column_config.TextColumn(disabled=True),
             "Turno": st.column_config.SelectboxColumn(options=TEAMS, required=True),
             "Rol": st.column_config.SelectboxColumn(options=ROLES, required=True),
-            "SV": st.column_config.CheckboxColumn(label="¿Es SV?", help="Puede cubrir conductor", default=False)
+            "Poli": st.column_config.CheckboxColumn(label="¿Es Poli?", help="Puede cubrir a mandos", default=False)
         }
         edited_df = st.data_editor(
             st.session_state.roster_data, 
@@ -809,7 +806,7 @@ c_main, c_vis = st.columns([1, 2])
 with c_main:
     st.subheader("2. Selección Manual")
     all_names = edited_df['Nombre'].tolist()
-    # Ordenar: Capataz, 2º Cap, Bombero
+    # Ordenar UBH: Capataz > 2Cap > Poli > Bombero
     names_sorted = sorted(all_names, key=lambda x: (0 if "Capataz" in x else 1 if "2º" in x else 2))
     selected_person = st.selectbox("Selecciona Trabajador:", names_sorted)
     
