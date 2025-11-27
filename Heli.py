@@ -13,13 +13,16 @@ from operator import itemgetter
 from datetime import timedelta
 
 # ==============================================================================
-# 1. CONFIGURACIÓN Y CONSTANTES (UBH FLEXIBLE)
+# 1. CONFIGURACIÓN Y CONSTANTES (UBH HELITRANSPORTADA)
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor UBH V55.0")
+st.set_page_config(layout="wide", page_title="Gestor UBH V56.0")
+
+# LÍMITES DE JORNADA (NUEVOS)
+MIN_WORK_DAYS = 126
+MAX_WORK_DAYS = 128
 
 TEAMS = ['A', 'B', 'C']
-# Roles Base (El Polivalente es un atributo extra, no un rol base excluyente)
 ROLES = ["Capataz", "2º Capataz", "Bombero"] 
 MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
 
@@ -74,7 +77,7 @@ STRATEGIES = {
     },
     "sniper": {
         "name": "🎯 Francotirador (13 días)",
-        "desc": "Eliges tus 13 guardias una a una.",
+        "desc": "13 días sueltos de guardia.",
         "blocks": [ {"dur": 1, "cred": 1, "label": "Día Suelto (1 Cr)"} ],
         "auto_recipe": [{"dur": 1, "target": 1}] * 13
     },
@@ -93,32 +96,38 @@ STRATEGIES = {
     }
 }
 
-# Plantilla por defecto (Poli es ahora un Checkbox True/False)
+# Plantilla por defecto (7 pax/turno, Poli Checkbox)
 DEFAULT_ROSTER = [
+    # TURNO A
     {"ID_Puesto": "Capataz A",    "Nombre": "Capataz A",    "Turno": "A", "Rol": "Capataz",    "Poli": False},
     {"ID_Puesto": "2º Cap A",     "Nombre": "2º Cap A",     "Turno": "A", "Rol": "2º Capataz", "Poli": False},
-    {"ID_Puesto": "Bombero A1",   "Nombre": "Bombero A1",   "Turno": "A", "Rol": "Bombero",    "Poli": True}, # Ejemplo Poli
+    {"ID_Puesto": "Bombero A1",   "Nombre": "Bombero A1",   "Turno": "A", "Rol": "Bombero",    "Poli": True},
     {"ID_Puesto": "Bombero A2",   "Nombre": "Bombero A2",   "Turno": "A", "Rol": "Bombero",    "Poli": False},
     {"ID_Puesto": "Bombero A3",   "Nombre": "Bombero A3",   "Turno": "A", "Rol": "Bombero",    "Poli": False},
     {"ID_Puesto": "Bombero A4",   "Nombre": "Bombero A4",   "Turno": "A", "Rol": "Bombero",    "Poli": False},
+    {"ID_Puesto": "Bombero A5",   "Nombre": "Bombero A5",   "Turno": "A", "Rol": "Bombero",    "Poli": False},
     
+    # TURNO B
     {"ID_Puesto": "Capataz B",    "Nombre": "Capataz B",    "Turno": "B", "Rol": "Capataz",    "Poli": False},
     {"ID_Puesto": "2º Cap B",     "Nombre": "2º Cap B",     "Turno": "B", "Rol": "2º Capataz", "Poli": False},
     {"ID_Puesto": "Bombero B1",   "Nombre": "Bombero B1",   "Turno": "B", "Rol": "Bombero",    "Poli": True},
     {"ID_Puesto": "Bombero B2",   "Nombre": "Bombero B2",   "Turno": "B", "Rol": "Bombero",    "Poli": False},
     {"ID_Puesto": "Bombero B3",   "Nombre": "Bombero B3",   "Turno": "B", "Rol": "Bombero",    "Poli": False},
     {"ID_Puesto": "Bombero B4",   "Nombre": "Bombero B4",   "Turno": "B", "Rol": "Bombero",    "Poli": False},
+    {"ID_Puesto": "Bombero B5",   "Nombre": "Bombero B5",   "Turno": "B", "Rol": "Bombero",    "Poli": False},
 
+    # TURNO C
     {"ID_Puesto": "Capataz C",    "Nombre": "Capataz C",    "Turno": "C", "Rol": "Capataz",    "Poli": False},
     {"ID_Puesto": "2º Cap C",     "Nombre": "2º Cap C",     "Turno": "C", "Rol": "2º Capataz", "Poli": False},
     {"ID_Puesto": "Bombero C1",   "Nombre": "Bombero C1",   "Turno": "C", "Rol": "Bombero",    "Poli": True},
     {"ID_Puesto": "Bombero C2",   "Nombre": "Bombero C2",   "Turno": "C", "Rol": "Bombero",    "Poli": False},
     {"ID_Puesto": "Bombero C3",   "Nombre": "Bombero C3",   "Turno": "C", "Rol": "Bombero",    "Poli": False},
     {"ID_Puesto": "Bombero C4",   "Nombre": "Bombero C4",   "Turno": "C", "Rol": "Bombero",    "Poli": False},
+    {"ID_Puesto": "Bombero C5",   "Nombre": "Bombero C5",   "Turno": "C", "Rol": "Bombero",    "Poli": False},
 ]
 
 # ==============================================================================
-# 2. DEFINICIÓN DE TODAS LAS FUNCIONES (MOTOR)
+# 2. DEFINICIÓN DE TODAS LAS FUNCIONES
 # ==============================================================================
 
 def get_short_id(name, role, turn):
@@ -128,8 +137,7 @@ def get_short_id(name, role, turn):
         parts = name.split()
         if len(parts) > 1:
             suffix = parts[-1]
-            if len(suffix) >= 2:
-                return f"B{suffix[-1]}{turn}"
+            if len(suffix) >= 2: return f"B{suffix[-1]}{turn}"
     return f"{name[:3]}{turn}"
 
 def generate_night_template():
@@ -198,32 +206,25 @@ def get_clustered_dates(available_idxs, needed_count):
         else: break
     return sorted(selected)
 
-# --- VALIDACIÓN CONFLICTOS UBH (POLIVALENTES LIBRES) ---
+# --- VALIDACIÓN CONFLICTOS UBH ---
 def check_global_conflict_generic(start_idx, duration, person, occupation_map, base_sch, year, transition_dates):
     total_days = len(base_sch['A'])
     if start_idx + duration > total_days: return True 
 
     for i in range(start_idx, start_idx + duration):
         d_obj = datetime.date(year, 1, 1) + timedelta(days=i)
-        
-        # 1. Nocturna
         if d_obj in transition_dates:
             if base_sch[person['Turno']][i] == 'T': return True
         
         occupants = occupation_map.get(i, [])
-        
-        # 2. Máx 2 personas
         if len(occupants) >= 2: return True
         
         for occ in occupants:
-            # 3. Mismo turno prohibido
             if occ['Turno'] == person['Turno']: return True
-            
-            # 4. Categoría (Relax para Bomberos/Poli)
+            # Normas de Mando (Estrictas)
             if person['Rol'] == 'Capataz' and occ['Rol'] == 'Capataz': return True
             if person['Rol'] == '2º Capataz' and occ['Rol'] == '2º Capataz': return True
-            # Bomberos (y Polis que son bomberos) pueden coincidir
-
+            # Bomberos (incluidos Polis que son Bomberos) pueden coincidir si son diff turno
     return False
 
 def book_slot_gen(start_idx, duration, person, occupation_map):
@@ -260,9 +261,7 @@ def get_available_blocks_for_person(person_name, roster_df, current_requests, ye
             duration = b_def['dur']
             target_cred = b_def['cred']
             label_key = b_def['label']
-            
             if d + duration > total_days: continue
-            
             if not check_global_conflict_generic(d, duration, person, occupation_map, base_sch, year, transition_dates):
                 overlap = False
                 for ms in my_current_slots:
@@ -284,8 +283,7 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key):
     occupation_map = {} 
     generated_requests = []
     people = roster_df.to_dict('records')
-    # Prioridad: Capataz > 2º Cap > Bombero (Polis incluidos aqui)
-    priority_order = ["Capataz", "2º Capataz", "Bombero"]
+    priority_order = ["Capataz", "2º Capataz", "Bombero"] # Poli es bombero aqui
     people.sort(key=lambda x: priority_order.index(x['Rol']))
     RECIPE = STRATEGIES[strategy_key]['auto_recipe']
     
@@ -337,13 +335,10 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key):
                             })
     return generated_requests
 
-# --- VISUALIZADOR DE MAPA DE CALOR GLOBAL ---
 def render_global_occupation_calendar(year, roster_df, requests, night_periods):
     base_sch, total_days = generate_base_schedule(year)
     transition_dates = get_night_transition_dates(night_periods)
-    
     occ_map = {d: [] for d in range(total_days)}
-    
     for req in requests:
         name = req['Nombre']
         if name not in roster_df['Nombre'].values: continue
@@ -354,7 +349,6 @@ def render_global_occupation_calendar(year, roster_df, requests, night_periods):
         for d in range(s, e+1):
             if base_sch[turn][d] == 'T':
                 occ_map[d].append(get_short_id(name, person_row['Rol'], turn))
-
     html = "<div style='font-family:monospace; font-size:9px;'>"
     html += """
     <div style='display:flex; gap:10px; margin-bottom:10px; font-size:11px; font-weight:bold;'>
@@ -367,24 +361,19 @@ def render_global_occupation_calendar(year, roster_df, requests, night_periods):
     for d in range(1, 32):
         html += f"<div style='width:32px; text-align:center; color:#888;'>{d}</div>"
     html += "</div>"
-
     for m_idx, mes in enumerate(MESES):
         m_num = m_idx + 1
         days_in_month = calendar.monthrange(year, m_num)[1]
         html += f"<div style='display:flex; margin-bottom:2px;'><div style='width:35px; font-weight:bold; padding-top:8px;'>{mes}</div>"
-        
         for d in range(1, 32):
             if d <= days_in_month:
                 dt = datetime.date(year, m_num, d)
                 d_idx = dt.timetuple().tm_yday - 1
-                
                 occupants = occ_map[d_idx]
                 count = len(occupants)
-                
                 if count == 0: bg = "#d4edda"; txt_col = "#155724"
                 elif count == 1: bg = "#FFF3CD"; txt_col = "#856404"
                 else: bg = "#F8D7DA"; txt_col = "#721c24"
-
                 border = "1px solid #fff"
                 if dt in transition_dates: border = "2px solid red"
                 label = "<br>".join(occupants)
@@ -426,14 +415,10 @@ def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=
                     bg_color = "#d4edda"; text_color = "#155724"
                     if is_in_night_period(d_idx, year, night_periods):
                         bg_color = "#1E7E34"; text_color = "white"
-                elif final_val == 'V':
-                    bg_color = "#FFC000"; text_color = "#000"
-                elif final_val == 'V(R)':
-                    bg_color = "#FFFFE0"; text_color = "#555"
-                elif final_val == 'T+':
-                    bg_color = "#ADD8E6"; text_color = "#000"
-                elif final_val == 'L*':
-                    bg_color = "#E6E6FA"; text_color = "#000"
+                elif final_val == 'V': bg_color = "#FFC000"; text_color = "#000"
+                elif final_val == 'V(R)': bg_color = "#FFFFE0"; text_color = "#555"
+                elif final_val == 'T+': bg_color = "#ADD8E6"; text_color = "#000"
+                elif final_val == 'L*': bg_color = "#E6E6FA"; text_color = "#000"
                 if dt in get_night_transition_dates(night_periods): border = "2px solid red"
                 html += f"<div style='width:20px; background-color:{bg_color}; color:{text_color}; text-align:center; border:{border}; border-radius:2px;'>{state[0]}</div>"
             else:
@@ -442,18 +427,16 @@ def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=
     html += "</div>"
     return html
 
-# --- LÓGICA DE COBERTURAS (MATCHMAKING) UBH + POLIVALENTE ---
+# --- COBERTURAS UBH FLEXIBLE (POLIVALENTE) ---
 def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, night_periods, adjustments_log_current_day=None):
     candidates = []
     missing_role = person_missing['Rol']
     missing_turn = person_missing['Turno']
-    
     blocked_turns = set()
     if adjustments_log_current_day:
         for coverer_name in adjustments_log_current_day:
             cov_p = roster_df[roster_df['Nombre'] == coverer_name]
             if not cov_p.empty: blocked_turns.add(cov_p.iloc[0]['Turno'])
-
     turn_exhausted_from_night = None
     if day_idx > 0:
         prev_day_idx = day_idx - 1
@@ -462,26 +445,27 @@ def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, n
             for t in TEAMS:
                 if base_sch_temp[t][prev_day_idx] == 'T':
                     turn_exhausted_from_night = t; break
-
     for _, candidate in roster_df.iterrows():
         if candidate['Turno'] == missing_turn: continue
         cand_status = current_schedule[candidate['Nombre']][day_idx]
         if cand_status != 'L': continue
-        
         if candidate['Turno'] in blocked_turns: continue
         if turn_exhausted_from_night and candidate['Turno'] == turn_exhausted_from_night: continue
 
-        # LÓGICA DE ROLES UBH + POLIVALENTE (Checkbox)
+        # --- LOGICA FLEXIBLE POLIVALENTE ---
         is_compatible = False
         cand_role = candidate['Rol']
-        is_poli = candidate['Poli'] # Checkbox
+        cand_is_poli = candidate['Poli'] # Checkbox
         
         if missing_role == "Capataz":
-            if cand_role in ["Capataz", "2º Capataz"] or is_poli: is_compatible = True
+            # Cubren: Capataz, 2º Capataz, o cualquiera que sea Poli
+            if cand_role in ["Capataz", "2º Capataz"] or cand_is_poli: is_compatible = True
         elif missing_role == "2º Capataz":
-            if cand_role in ["Capataz", "2º Capataz"] or is_poli: is_compatible = True
+             # Cubren: Capataz, 2º Capataz, o cualquiera que sea Poli
+            if cand_role in ["Capataz", "2º Capataz"] or cand_is_poli: is_compatible = True
         elif missing_role == "Bombero":
-            if cand_role == "Bombero": is_compatible = True # Poli es bombero tb
+            # Cubren: Bomberos (o Polis que son bomberos)
+            if cand_role == "Bombero": is_compatible = True
             
         if is_compatible: candidates.append(candidate['Nombre'])
     return candidates
@@ -493,19 +477,14 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, forced
     turn_coverage_counters = {'A': 0, 'B': 0, 'C': 0}
     person_coverage_counters = {name: 0 for name in roster_df['Nombre']}
     name_to_turn = {row['Nombre']: row['Turno'] for _, row in roster_df.iterrows()}
-    
-    # Carga base para nivelador
     base_work_load = {}
     for _, row in roster_df.iterrows():
         base_t_count = base_schedule_turn[row['Turno']].count('T')
         base_work_load[row['Nombre']] = base_t_count - 13
-    
     for _, row in roster_df.iterrows():
         final_schedule[row['Nombre']] = base_schedule_turn[row['Turno']].copy()
-
     day_vacations = {i: [] for i in range(total_days)}
     natural_days_count = {name: 0 for name in roster_df['Nombre']}
-    
     for req in requests:
         name = req['Nombre']
         s_idx = req['Inicio'].timetuple().tm_yday - 1
@@ -518,14 +497,12 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, forced
                 final_schedule[name][d] = 'V'
             else:
                 final_schedule[name][d] = 'V(L)'
-
     adjustments_log = []
     for d in range(total_days):
         absent_people = day_vacations[d]
         if not absent_people: continue
         current_day_coverers = []
         absent_people.sort(key=lambda x: 0 if "Capataz" in x else 1)
-
         for name_missing in absent_people:
             person_row = roster_df[roster_df['Nombre'] == name_missing].iloc[0]
             candidates = get_candidates(person_row, roster_df, d, final_schedule, year, night_periods, current_day_coverers)
@@ -536,24 +513,19 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, forced
                     prev2 = final_schedule[c][d-2] if d>1 else 'L'
                     if not (prev.startswith('T') and prev2.startswith('T')): valid.append(c)
                 if valid:
-                    valid.sort(key=lambda x: (
-                        base_work_load[x] + person_coverage_counters[x],
-                        random.random()
-                    ))
+                    valid.sort(key=lambda x: (base_work_load[x] + person_coverage_counters[x], random.random()))
                     chosen = valid[0]
                     final_schedule[chosen][d] = f"T*({name_missing})"
                     adjustments_log.append((d, chosen, name_missing))
                     current_day_coverers.append(chosen)
                     turn_coverage_counters[name_to_turn[chosen]] += 1
                     person_coverage_counters[chosen] += 1
-
     for adj in forced_adjustments:
         d = adj['day_idx']
         p = adj['person']
         type_adj = adj['type']
         if type_adj == 'add': final_schedule[p][d] = "T+"
         elif type_adj == 'remove': final_schedule[p][d] = "L*"
-
     fill_log = {}
     for name in roster_df['Nombre']:
         if strategy_key == 'sniper':
@@ -571,7 +543,6 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, forced
                     fill_idxs = get_clustered_dates(available_idx, needed)
                     for idx in fill_idxs:
                         final_schedule[name][idx] = 'V(R)'
-
     return final_schedule, adjustments_log, person_coverage_counters, fill_log
 
 def get_work_days_count(final_schedule):
@@ -592,7 +563,6 @@ def find_adjustment_options(person_name, action_type, roster_df, year, night_per
     for sched in current_schedule.values():
         for i, s in enumerate(sched):
             if 'V' in s: vacation_counts[i] += 1
-
     for d in range(total_days):
         current_status = current_schedule[person_name][d]
         if action_type == 'add':
@@ -695,7 +665,7 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
 # INTERFAZ STREAMLIT
 # ==============================================================================
 
-st.title("🚁 Gestor UBH V55.0: Flexible + Polivalente")
+st.title("🚁 Gestor UBH V56.0: Flexible + Polivalente")
 st.markdown("**Diseñado por Marcos Esteban Vives**")
 
 with st.expander("📘 MANUAL UBH (LÉEME)", expanded=True):
@@ -715,7 +685,7 @@ with st.expander("📘 MANUAL UBH (LÉEME)", expanded=True):
     * Elige estrategia y usa el modo **Manual** o **Automático**.
     
     ### 3️⃣ EL NIVELADOR
-    * Ajusta los días finales en el panel "Ajuste Fino".
+    * Ajusta los días finales en el panel "Ajuste Fino" (126-128).
     """)
 
 # INICIALIZACIÓN DE ESTADO
@@ -930,14 +900,14 @@ if st.session_state.locked_result:
     cols_eq = st.columns(3)
     for i, (name, count) in enumerate(res['work_days'].items()):
         with cols_eq[i % 3]:
-            color = "green" if 121 <= count <= 123 else "red"
+            color = "green" if MIN_WORK_DAYS <= count <= MAX_WORK_DAYS else "red"
             st.markdown(f"**{name}**: <span style='color:{color}'>{count} días</span>", unsafe_allow_html=True)
     
     st.divider()
     col_poor, col_rich = st.columns(2)
     with col_poor:
-        st.subheader("📉 Falta Jornada (<121)")
-        poor_people = [n for n, c in res['work_days'].items() if c < 121]
+        st.subheader(f"📉 Falta Jornada (<{MIN_WORK_DAYS})")
+        poor_people = [n for n, c in res['work_days'].items() if c < MIN_WORK_DAYS]
         if not poor_people: st.success("Nadie necesita añadir.")
         else:
             p_select = st.selectbox("Seleccionar:", poor_people, key="sel_poor")
@@ -951,8 +921,8 @@ if st.session_state.locked_result:
                         st.rerun()
 
     with col_rich:
-        st.subheader("📈 Sobra Jornada (>123)")
-        rich_people = [n for n, c in res['work_days'].items() if c > 123]
+        st.subheader(f"📈 Sobra Jornada (>{MAX_WORK_DAYS})")
+        rich_people = [n for n, c in res['work_days'].items() if c > MAX_WORK_DAYS]
         if not rich_people: st.success("Nadie necesita quitar.")
         else:
             r_select = st.selectbox("Seleccionar:", rich_people, key="sel_rich")
