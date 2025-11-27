@@ -16,11 +16,7 @@ from datetime import timedelta
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V43.4 (Blindada)")
-
-# Ajuste de objetivos de jornada
-MIN_WORK_DAYS = 126
-MAX_WORK_DAYS = 128
+st.set_page_config(layout="wide", page_title="Gestor V43.5")
 
 TEAMS = ['A', 'B', 'C']
 ROLES = ["Jefe", "Subjefe", "Conductor", "Bombero"] 
@@ -118,7 +114,26 @@ DEFAULT_ROSTER = [
 ]
 
 # ==============================================================================
-# 2. DEFINICIÓN DE FUNCIONES
+# 2. INICIALIZACIÓN DE ESTADO (SAFETY FIRST)
+# ==============================================================================
+
+if 'roster_data' not in st.session_state:
+    st.session_state.roster_data = pd.DataFrame(DEFAULT_ROSTER)
+
+if 'raw_requests_df' not in st.session_state:
+    st.session_state.raw_requests_df = pd.DataFrame(columns=["Nombre", "Inicio", "Fin"])
+
+if 'forced_adjustments' not in st.session_state:
+    st.session_state.forced_adjustments = []
+
+if 'nights' not in st.session_state:
+    st.session_state.nights = []
+
+if 'locked_result' not in st.session_state:
+    st.session_state.locked_result = None
+
+# ==============================================================================
+# 3. DEFINICIÓN DE FUNCIONES
 # ==============================================================================
 
 def get_short_id(name, role, turn):
@@ -201,27 +216,16 @@ def get_clustered_dates(available_idxs, needed_count):
 
 def check_global_conflict_generic(start_idx, duration, person, occupation_map, base_sch, year, transition_dates):
     total_days = len(base_sch['A'])
-    if start_idx + duration > total_days: return True # Protección límite año
-
+    if start_idx + duration > total_days: return True
     for i in range(start_idx, start_idx + duration):
         d_obj = datetime.date(year, 1, 1) + timedelta(days=i)
-        
-        # 1. Nocturna
         if d_obj in transition_dates:
             if base_sch[person['Turno']][i] == 'T': return True
-        
         occupants = occupation_map.get(i, [])
-        
-        # 2. Max 2 personas fuera
         if len(occupants) >= 2: return True
-        
         for occ in occupants:
-            # 3. Mismo turno (Estricto para evitar C en B)
             if str(occ['Turno']) == str(person['Turno']): return True
-            
-            # 4. Misma categoría (salvo Bombero)
             if person['Rol'] != 'Bombero' and occ['Rol'] == person['Rol']: return True
-            
     return False
 
 def book_slot_gen(start_idx, duration, person, occupation_map):
@@ -250,7 +254,6 @@ def get_available_blocks_for_person(person_name, roster_df, current_requests, ye
     block_defs = STRATEGIES[strategy_key]['blocks']
     options = {b['label']: [] for b in block_defs}
     
-    # CORRECCIÓN: Bucle completo hasta final de año (sin -15)
     for d in range(total_days): 
         d_date = datetime.date(year, 1, 1) + timedelta(days=d)
         if not (start_month_idx <= d_date.month <= end_month_idx): continue
@@ -260,8 +263,8 @@ def get_available_blocks_for_person(person_name, roster_df, current_requests, ye
             target_cred = b_def['cred']
             label_key = b_def['label']
             
-            # Check estricto de desbordamiento
-            if d + duration > total_days: continue
+            # --- CORRECCIÓN DE DICIEMBRE ---
+            if d + duration > total_days: continue # Solo descartamos si se sale del año
             
             if not check_global_conflict_generic(d, duration, person, occupation_map, base_sch, year, transition_dates):
                 overlap = False
@@ -336,10 +339,10 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key):
                             })
     return generated_requests
 
-# --- MAPA DE CALOR GLOBAL ---
 def render_global_occupation_calendar(year, roster_df, requests, night_periods):
     base_sch, total_days = generate_base_schedule(year)
     transition_dates = get_night_transition_dates(night_periods)
+    
     occ_map = {d: [] for d in range(total_days)}
     
     for req in requests:
@@ -350,7 +353,7 @@ def render_global_occupation_calendar(year, roster_df, requests, night_periods):
         s = req['Inicio'].timetuple().tm_yday - 1
         e = req['Fin'].timetuple().tm_yday - 1
         for d in range(s, e+1):
-            if base_sch[turn][d] == 'T':
+            if d < total_days and base_sch[turn][d] == 'T': # Check index
                 occ_map[d].append(get_short_id(name, person_row['Rol'], turn))
 
     html = "<div style='font-family:monospace; font-size:9px;'>"
@@ -370,15 +373,19 @@ def render_global_occupation_calendar(year, roster_df, requests, night_periods):
         m_num = m_idx + 1
         days_in_month = calendar.monthrange(year, m_num)[1]
         html += f"<div style='display:flex; margin-bottom:2px;'><div style='width:35px; font-weight:bold; padding-top:8px;'>{mes}</div>"
+        
         for d in range(1, 32):
             if d <= days_in_month:
                 dt = datetime.date(year, m_num, d)
                 d_idx = dt.timetuple().tm_yday - 1
+                
                 occupants = occ_map[d_idx]
                 count = len(occupants)
+                
                 if count == 0: bg = "#d4edda"; txt_col = "#155724"
                 elif count == 1: bg = "#FFF3CD"; txt_col = "#856404"
                 else: bg = "#F8D7DA"; txt_col = "#721c24"
+
                 border = "1px solid #fff"
                 if dt in transition_dates: border = "2px solid red"
                 label = "<br>".join(occupants)
@@ -391,6 +398,7 @@ def render_global_occupation_calendar(year, roster_df, requests, night_periods):
 
 def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=None):
     html = f"<div style='font-family:monospace; font-size:10px;'>"
+    
     html += """
     <div style='display:flex; gap:10px; margin-bottom:5px; font-size:11px; font-weight:bold;'>
         <span style='background:#d4edda; color:#155724; padding:2px 5px; border:1px solid #c3e6cb;'>T (Guardia)</span>
@@ -413,23 +421,29 @@ def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=
                 dt = datetime.date(year, m_num, d)
                 d_idx = dt.timetuple().tm_yday - 1
                 
-                # PROTECCIÓN BLINDADA CONTRA ERRORES DE ÍNDICE
-                if d_idx >= len(base_sch[team]): continue
+                if d_idx >= len(base_sch[team]): continue # BLINDAJE INDICE
                 
                 state = base_sch[team][d_idx]
                 final_val = state
                 if custom_schedule: final_val = custom_schedule[d_idx]
+
                 bg_color = "#eee"; text_color = "#ccc"; border = "1px solid #fff"
                 
                 if final_val == 'T': 
                     bg_color = "#d4edda"; text_color = "#155724"
                     if is_in_night_period(d_idx, year, night_periods):
                         bg_color = "#1E7E34"; text_color = "white"
-                elif final_val == 'V': bg_color = "#FFC000"; text_color = "#000"
-                elif final_val == 'V(R)': bg_color = "#FFFFE0"; text_color = "#555"
-                elif final_val == 'T+': bg_color = "#ADD8E6"; text_color = "#000"
-                elif final_val == 'L*': bg_color = "#E6E6FA"; text_color = "#000"
+                elif final_val == 'V':
+                    bg_color = "#FFC000"; text_color = "#000" # Oro
+                elif final_val == 'V(R)':
+                    bg_color = "#FFFFE0"; text_color = "#555" # Crema
+                elif final_val == 'T+':
+                    bg_color = "#ADD8E6"; text_color = "#000"
+                elif final_val == 'L*':
+                    bg_color = "#E6E6FA"; text_color = "#000"
+                
                 if dt in get_night_transition_dates(night_periods): border = "2px solid red"
+
                 html += f"<div style='width:20px; background-color:{bg_color}; color:{text_color}; text-align:center; border:{border}; border-radius:2px;'>{state[0]}</div>"
             else:
                 html += "<div style='width:20px;'></div>"
@@ -532,8 +546,8 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, forced
     for name in roster_df['Nombre']:
         if strategy_key == 'sniper':
             sched = final_schedule[name]
-            for d in range(total_days): # CORRECCIÓN: Bucle seguro
-                if d+2 >= total_days: break # Freno final
+            for d in range(total_days):
+                if d+2 >= total_days: break
                 if sched[d] == 'V':
                     if sched[d+1] == 'L': final_schedule[name][d+1] = 'V(R)'
                     if sched[d+2] == 'L': final_schedule[name][d+2] = 'V(R)'
@@ -624,16 +638,12 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
                     cell = ws1.cell(curr_row, d+1); cell.border = border_all; cell.alignment = align_c
                     if d <= d_month:
                         dt = datetime.date(year, m_idx+1, d); d_y = dt.timetuple().tm_yday - 1
-                        
-                        # PROTECCIÓN FINAL: INDICE
-                        if d_y >= len(schedule[nm]): continue
-                        
                         st_val = schedule[nm][d_y]
                         fill = s_L; val = ""
                         
                         if st_val == 'T': fill = s_T; val = "T"
-                        elif st_val == 'V': fill = s_V; val = "V"
-                        elif st_val == 'V(R)': fill = s_VR; val = "v"
+                        elif st_val == 'V': fill = s_V; val = "V" # Oro
+                        elif st_val == 'V(R)': fill = s_VR; val = "v" # Crema
                         elif st_val.startswith('T*'): 
                             fill = s_Cov; cell.font = font_red
                             raw_name = st_val.split('(')[1][:-1]
@@ -671,10 +681,10 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
     return out
 
 # ==============================================================================
-# INTERFAZ STREAMLIT (V43.4 - BLINDADA)
+# INTERFAZ STREAMLIT
 # ==============================================================================
 
-st.title("🚒 Gestor V43.4: Edición Local + Visual")
+st.title("🚒 Gestor V43.5: Edición Local + Mapa Global")
 st.markdown("**Diseñado por Marcos Esteban Vives**")
 
 with st.expander("📘 MANUAL DE USUARIO (LÉEME)", expanded=True):
@@ -694,7 +704,7 @@ with st.expander("📘 MANUAL DE USUARIO (LÉEME)", expanded=True):
     * Ajusta los días en el panel "Ajuste Fino" para llegar a 126-128.
     """)
 
-# INICIALIZACIÓN DE ESTADO
+# INICIALIZACIÓN DE ESTADO (CRUCIAL AL PRINCIPIO)
 if 'nights' not in st.session_state: st.session_state.nights = []
 if 'roster_data' not in st.session_state: st.session_state.roster_data = pd.DataFrame(DEFAULT_ROSTER)
 if 'raw_requests_df' not in st.session_state: st.session_state.raw_requests_df = pd.DataFrame(columns=["Nombre", "Inicio", "Fin"])
@@ -770,7 +780,7 @@ stats = calculate_stats(edited_df, current_requests, year_val)
 # VISUALIZACIÓN
 st.divider()
 
-# --- MAPA DE CALOR GLOBAL (V43.4) ---
+# --- MAPA DE CALOR GLOBAL ---
 st.subheader("🌍 Ocupación Global (Quién falta)")
 st.markdown(render_global_occupation_calendar(year_val, st.session_state.roster_data, current_requests, st.session_state.nights), unsafe_allow_html=True)
 
