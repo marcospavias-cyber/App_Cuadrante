@@ -16,7 +16,7 @@ from operator import itemgetter
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V52.0 - Libre Acceso", page_icon="🚒")
+st.set_page_config(layout="wide", page_title="Gestor V52.0 - Final", page_icon="🚒")
 
 TEAMS = ['A', 'B', 'C']
 ROLES = ["Jefe", "Subjefe", "Conductor", "Bombero"]
@@ -114,7 +114,7 @@ DEFAULT_ROSTER = [
 ]
 
 # ==============================================================================
-# 2. LÓGICA DE NEGOCIO (ESTRICTA)
+# 2. LÓGICA DE NEGOCIO (ESTRICTA Y REFORZADA)
 # ==============================================================================
 
 def get_short_id(name, role, turn):
@@ -187,7 +187,7 @@ def get_clustered_dates(available_idxs, needed_count):
         else: break
     return sorted(selected)
 
-# --- VALIDACIÓN ESTRICTA DE CONFLICTOS (NORMA 11 + COBERTURA) ---
+# --- VALIDACIÓN ESTRICTA REFORZADA ---
 def check_conflict_strict(start_idx, duration, person, occupation_map, base_sch, year, transition_dates, roster_df, current_requests):
     total_days = len(base_sch['A'])
     if start_idx + duration > total_days: return True
@@ -195,22 +195,33 @@ def check_conflict_strict(start_idx, duration, person, occupation_map, base_sch,
     my_start_natural = start_idx
     my_end_natural = start_idx + duration - 1
 
-    # 1. Chequeo diario (Ocupación de T)
+    # 1. Chequeo de REGLAS DIARIAS (Turnos de Trabajo 'T')
     for i in range(start_idx, start_idx + duration):
         # Regla Noche
         d_obj = datetime.date(year, 1, 1) + timedelta(days=i)
         if d_obj in transition_dates:
             if base_sch[person['Turno']][i] == 'T': return True
         
-        # Regla Global de Capacidad (Max 2 'T' faltando)
+        # Regla: Mismo turno 'T'
         occupants = occupation_map.get(i, [])
-        if len(occupants) >= 2: return True
-        
         for occ in occupants:
-            # Regla Turno (Mismo turno 'T')
             if occ['Turno'] == person['Turno']: return True
     
-    # 2. Chequeo de Solapamiento Natural por Categoría (PDF Norma 11)
+    # 2. Chequeo de CAPACIDAD GLOBAL (Max 2 fuera SIMULTÁNEAMENTE)
+    # Contamos cuántas personas hay de vacaciones (naturales) en mis días
+    for d_check in range(my_start_natural, my_end_natural + 1):
+        count_absent = 0
+        for req in current_requests:
+            if req['Nombre'] == person['Nombre']: continue
+            r_s = req['Inicio'].timetuple().tm_yday - 1
+            r_e = req['Fin'].timetuple().tm_yday - 1
+            if (d_check >= r_s and d_check <= r_e):
+                count_absent += 1
+        
+        if count_absent >= 2: 
+            return True # Ya hay 2 fuera este día, no cabe un tercero.
+
+    # 3. Chequeo de Solapamiento Natural por CATEGORÍA (PDF Norma 11)
     if person['Rol'] != 'Bombero':
         for req in current_requests:
             if req['Nombre'] == person['Nombre']: continue 
@@ -219,7 +230,7 @@ def check_conflict_strict(start_idx, duration, person, occupation_map, base_sch,
                 other_start = req['Inicio'].timetuple().tm_yday - 1
                 other_end = req['Fin'].timetuple().tm_yday - 1
                 if (my_start_natural <= other_end) and (my_end_natural >= other_start):
-                    return True # CONFLICTO: Ya hay un compañero de mi categoría fuera.
+                    return True # CONFLICTO: Ya hay un compañero de mi misma categoría fuera.
 
     return False
 
@@ -255,7 +266,6 @@ def get_available_blocks_for_person(person_name, roster_df, current_requests, ye
     for d in range(total_days - 15): 
         d_date = datetime.date(year, 1, 1) + timedelta(days=d)
         
-        # Filtro de meses corregido para incluir solapamientos
         if d_date.month < start_month_idx or d_date.month > end_month_idx: continue
         
         for b_def in block_defs:
@@ -263,7 +273,6 @@ def get_available_blocks_for_person(person_name, roster_df, current_requests, ye
             target_cred = b_def['cred']
             label_key = b_def['label']
             
-            # VALIDACIÓN ESTRICTA
             if not check_conflict_strict(d, duration, person, occupation_map, base_sch, year, transition_dates, roster_df, current_requests):
                 overlap = False
                 for ms in my_current_slots:
@@ -304,7 +313,6 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key):
             for d in range(0, total_days - duration):
                 c = sum([1 for k in range(d, d+duration) if base_sch[person['Turno']][k] == 'T'])
                 if c == target:
-                     # VALIDACIÓN ESTRICTA
                      if not check_conflict_strict(d, duration, person, occupation_map, base_sch, year, transition_dates, roster_df, generated_requests):
                          options.append(d)
             random.shuffle(options)
@@ -442,7 +450,7 @@ def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=
     html += "</div>"
     return html
 
-# --- GESTIÓN DE COBERTURAS (CON MAPA DE INDISPONIBILIDAD) ---
+# --- GESTIÓN DE COBERTURAS ---
 def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, night_periods, unavailable_map, adjustments_log_current_day=None):
     candidates = []
     missing_role = person_missing['Rol']
@@ -595,6 +603,8 @@ def get_work_days_count(final_schedule):
 
 def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, night_periods, adjustments_log, strategy_key="standard"):
     wb = Workbook()
+    
+    # Estilos
     s_T = PatternFill("solid", fgColor="C6EFCE"); s_V = PatternFill("solid", fgColor="FFC000") 
     s_VR = PatternFill("solid", fgColor="FFFFE0"); s_Cov = PatternFill("solid", fgColor="FFC7CE")
     s_L = PatternFill("solid", fgColor="F2F2F2"); s_Night = PatternFill("solid", fgColor="A6A6A6")
@@ -604,6 +614,7 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
     border_thin = Side(border_style="thin", color="000000")
     border_all = Border(left=border_thin, right=border_thin, top=border_thin, bottom=border_thin)
 
+    # HOJA 1: CUADRANTE
     ws1 = wb.active; ws1.title = "Cuadrante"
     ws1.column_dimensions['A'].width = 20
     for i in range(2, 34): ws1.column_dimensions[get_column_letter(i)].width = 4
@@ -649,6 +660,7 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
                 curr_row += 1
             curr_row += 2 
     
+    # HOJA 2: ESTADISTICAS
     ws2 = wb.create_sheet("Estadísticas")
     headers = ["Nombre", "Turno", "Puesto", "Días Trabajados", "Gastado (T)", "Coberturas (T*)", "Total Vacs (Nat)"]
     ws2.append(headers)
@@ -662,6 +674,30 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
             if str(s) == 'T' or str(s).startswith('T*') or str(s) == 'T+': total_worked += 1
         ws2.append([name, p['Turno'], p['Rol'], total_worked, v_credits, t_cover, v_natural])
 
+    # HOJA 3: DETALLE PERIODOS (SOLICITUD DEL USUARIO)
+    ws3 = wb.create_sheet("Listado Periodos")
+    ws3.append(["Nombre", "Rol", "Turno", "Inicio", "Fin", "Días"])
+    
+    # Preparamos datos ordenados
+    reqs_data = []
+    for req in requests:
+        p_row = roster_df[roster_df['Nombre'] == req['Nombre']].iloc[0]
+        dur = (req['Fin'] - req['Inicio']).days + 1
+        reqs_data.append({
+            "Nombre": req['Nombre'],
+            "Rol": p_row['Rol'],
+            "Turno": p_row['Turno'],
+            "Inicio": req['Inicio'],
+            "Fin": req['Fin'],
+            "Días": dur
+        })
+    # Ordenar por Turno -> Rol -> Nombre -> Fecha Inicio
+    reqs_data.sort(key=lambda x: (x['Turno'], x['Rol'], x['Nombre'], x['Inicio']))
+    
+    for r in reqs_data:
+        ws3.append([r['Nombre'], r['Rol'], r['Turno'], r['Inicio'], r['Fin'], r['Días']])
+
+    # HOJA 4: AJUSTES
     ws4 = wb.create_sheet("Ajustes")
     ws4.append(["Fecha", "Cubre", "Ausente"])
     for d, c, a in adjustments_log:
@@ -695,7 +731,6 @@ stats = calculate_stats(st.session_state.roster_data, current_requests, year_val
 with st.sidebar:
     st.header("Panel de Control")
     
-    # 1. NOCTURNAS (RECUPERADO)
     with st.expander("🌑 Configurar Nocturnas"):
         c1, c2 = st.columns(2)
         d_start = c1.date_input("Inicio", value=None)
@@ -722,7 +757,6 @@ with st.sidebar:
 
     st.markdown("---")
     
-    # 2. PERSISTENCIA
     st.subheader("💾 Guardar Progreso")
     if not st.session_state.raw_requests_df.empty:
         csv_buffer = st.session_state.raw_requests_df.to_csv(index=False).encode('utf-8')
@@ -755,9 +789,7 @@ with st.sidebar:
 # VISUALIZACIÓN
 st.divider()
 
-# --- MAPA DE CALOR GLOBAL ---
 st.subheader("🌍 Ocupación Global")
-
 st.markdown(render_global_occupation_calendar(year_val, st.session_state.roster_data, current_requests, st.session_state.nights), unsafe_allow_html=True)
 st.divider()
 
@@ -790,7 +822,6 @@ with c_main:
                 if not available_opts: st.caption("Sin opciones.")
                 else:
                     with st.container(height=300):
-                        # AUMENTADO LIMITE DE VISUALIZACIÓN PARA EVITAR CORTE ABRIL/MAYO
                         for opt in available_opts[:100]: 
                             if st.button(f"➕ {opt['label']}", key=f"add_{selected_person}_{opt['start']}_{i}"):
                                 new_req = {"Nombre": selected_person, "Inicio": opt['start'], "Fin": opt['end']}
