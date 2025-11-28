@@ -16,7 +16,7 @@ from operator import itemgetter
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V52.0 - Final Auto", page_icon="🚒")
+st.set_page_config(layout="wide", page_title="Gestor V52.0 - Final Secure", page_icon="🚒")
 
 TEAMS = ['A', 'B', 'C']
 ROLES = ["Jefe", "Subjefe", "Conductor", "Bombero"]
@@ -194,19 +194,14 @@ def check_conflict_strict(start_idx, duration, person, occupation_map, base_sch,
     my_start_natural = start_idx
     my_end_natural = start_idx + duration - 1
 
-    # 1. Chequeo de REGLAS DIARIAS (Turnos de Trabajo 'T')
     for i in range(start_idx, start_idx + duration):
-        # Regla Noche
         d_obj = datetime.date(year, 1, 1) + timedelta(days=i)
         if d_obj in transition_dates:
             if base_sch[person['Turno']][i] == 'T': return True
-        
-        # Regla: Mismo turno 'T'
         occupants = occupation_map.get(i, [])
         for occ in occupants:
             if occ['Turno'] == person['Turno']: return True
     
-    # 2. Chequeo de CAPACIDAD GLOBAL (Max 2 fuera SIMULTÁNEAMENTE)
     for d_check in range(my_start_natural, my_end_natural + 1):
         count_absent = 0
         for req in current_requests:
@@ -215,11 +210,8 @@ def check_conflict_strict(start_idx, duration, person, occupation_map, base_sch,
             r_e = req['Fin'].timetuple().tm_yday - 1
             if (d_check >= r_s and d_check <= r_e):
                 count_absent += 1
-        
-        if count_absent >= 2: 
-            return True 
+        if count_absent >= 2: return True 
 
-    # 3. Chequeo de Solapamiento Natural por CATEGORÍA (PDF Norma 11)
     if person['Rol'] != 'Bombero':
         for req in current_requests:
             if req['Nombre'] == person['Nombre']: continue 
@@ -229,7 +221,6 @@ def check_conflict_strict(start_idx, duration, person, occupation_map, base_sch,
                 other_end = req['Fin'].timetuple().tm_yday - 1
                 if (my_start_natural <= other_end) and (my_end_natural >= other_start):
                     return True
-
     return False
 
 def book_slot_gen(start_idx, duration, person, occupation_map):
@@ -301,33 +292,21 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key):
     for person in people:
         my_slots = []
         current_recipe = RECIPE.copy()
-        
-        # MEJORA: Ordenar bloques de MAYOR a MENOR duración. 
-        # Es más difícil encajar bloques de 10 días que de 6.
         current_recipe.sort(key=lambda x: x['dur'], reverse=True)
-        
         credits_got = 0
         
         for block in current_recipe:
             duration = block['dur']
             target = block['target']
             options = []
-            
-            # Buscar todos los huecos posibles en el año
             for d in range(0, total_days - duration):
                 c = sum([1 for k in range(d, d+duration) if base_sch[person['Turno']][k] == 'T'])
                 if c == target:
-                     # Chequeo estricto
                      if not check_conflict_strict(d, duration, person, occupation_map, base_sch, year, transition_dates, roster_df, generated_requests):
                          options.append(d)
-            
-            # Elegir aleatoriamente entre los huecos válidos
             random.shuffle(options)
-            
             for start in options:
-                # Chequeo de solapamiento con MIS propios bloques ya asignados
                 overlap = any(start < s[0]+s[1] and start+duration > s[0] for s in my_slots)
-                
                 if not overlap:
                     book_slot_gen(start, duration, person, occupation_map)
                     my_slots.append((start, duration))
@@ -339,8 +318,6 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key):
                     })
                     break 
         
-        # Relleno de créditos sueltos solo si es estrictamente necesario y no se cumplió el objetivo
-        # En estrategias como "Safe" o "Standard", intentamos llegar a 12-13 créditos
         if credits_got < 12:
             all_days_random = list(range(total_days))
             random.shuffle(all_days_random)
@@ -740,6 +717,19 @@ stats = calculate_stats(st.session_state.roster_data, current_requests, year_val
 with st.sidebar:
     st.header("Panel de Control")
     
+    def clear_on_strategy_change():
+        st.session_state.raw_requests_df = pd.DataFrame(columns=["Nombre", "Inicio", "Fin"])
+        st.session_state.locked_result = None
+        st.toast("🧹 Estrategia cambiada: Se han reseteado las vacaciones.", icon="⚠️")
+
+    # The widget
+    strategy_key = st.selectbox(
+        "🎯 Estrategia",
+        list(STRATEGIES.keys()),
+        format_func=lambda x: STRATEGIES[x]['name'],
+        on_change=clear_on_strategy_change 
+    )
+    
     with st.expander("🌑 Configurar Nocturnas"):
         c1, c2 = st.columns(2)
         d_start = c1.date_input("Inicio", value=None)
@@ -786,7 +776,6 @@ with st.sidebar:
 
     st.markdown("---")
     year_val = st.number_input("Año", value=2026)
-    strategy_key = st.selectbox("🎯 Estrategia", list(STRATEGIES.keys()), format_func=lambda x: STRATEGIES[x]['name'])
     
     if st.button("🎲 Generar Automático", type="primary"):
         new_reqs = auto_generate_schedule(st.session_state.roster_data, year_val, st.session_state.nights, strategy_key)
@@ -802,7 +791,7 @@ st.subheader("🌍 Ocupación Global")
 st.markdown(render_global_occupation_calendar(year_val, st.session_state.roster_data, current_requests, st.session_state.nights), unsafe_allow_html=True)
 st.divider()
 
-# --- SELECCIÓN MANUAL (SIN CONTRASEÑA) ---
+# --- SELECCIÓN MANUAL ---
 c_main, c_vis = st.columns([1, 2])
 with c_main:
     st.subheader("2. Selección Manual")
@@ -821,8 +810,44 @@ with c_main:
         
         month_range = st.select_slider("📅 Meses:", options=MESES, value=(MESES[0], MESES[-1]))
         options = get_available_blocks_for_person(selected_person, st.session_state.roster_data, current_requests, year_val, st.session_state.nights, month_range, strategy_key)
+        
+        # --- NUEVA LÓGICA DE CONTADORES ---
+        p_row = st.session_state.roster_data[st.session_state.roster_data['Nombre'] == selected_person].iloc[0]
+        p_turn = p_row['Turno']
+        base_sch, _ = generate_base_schedule(year_val)
+        
+        # Calcular USADOS
+        used_counts = {}
+        for r in my_reqs:
+            dur = (r['Fin'] - r['Inicio']).days + 1
+            s_idx = r['Inicio'].timetuple().tm_yday - 1
+            e_idx = r['Fin'].timetuple().tm_yday - 1
+            cred = 0
+            for d_i in range(s_idx, e_idx + 1):
+                if base_sch[p_turn][d_i] == 'T': cred += 1
+            key = (dur, cred)
+            used_counts[key] = used_counts.get(key, 0) + 1
+
+        # Calcular LÍMITES
+        recipe = STRATEGIES[strategy_key]['auto_recipe']
+        limit_counts = {}
+        for item in recipe:
+            key = (item['dur'], item['target'])
+            limit_counts[key] = limit_counts.get(key, 0) + 1
+        
+        # Generar Labels
         block_defs = STRATEGIES[strategy_key]['blocks']
-        tabs = st.tabs([b['label'] for b in block_defs])
+        tab_labels = []
+        for b_def in block_defs:
+            d = b_def['dur']
+            c = b_def['cred']
+            used = used_counts.get((d,c), 0)
+            limit = limit_counts.get((d,c), 0)
+            label = f"{b_def['label']} ({used}/{limit})"
+            tab_labels.append(label)
+        # ------------------------------------
+
+        tabs = st.tabs(tab_labels)
         
         for i, b_def in enumerate(block_defs):
             key = b_def['label']
