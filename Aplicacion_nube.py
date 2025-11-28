@@ -16,7 +16,32 @@ from operator import itemgetter
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V52.0 - Final Pro", page_icon="🚒")
+st.set_page_config(layout="wide", page_title="Gestor V52.0 - Final Visual", page_icon="🚒")
+
+# --- CRÉDITOS SUPERIORES ---
+st.markdown("<h5 style='text-align: center; color: #888;'>Diseñado por Marcos Esteban Vives</h5>", unsafe_allow_html=True)
+st.title("🚒 Gestor V52.0: Libre Acceso")
+
+# --- MANUAL Y AVISO ---
+with st.expander("📘 MANUAL DE USUARIO (Haz clic para desplegar)", expanded=False):
+    st.markdown("""
+    ### 1. Configuración Inicial (Panel Izquierdo)
+    * **Estrategia:** Elige tu modelo de vacaciones (ej. Estándar, Matemática Pura). **¡Ojo!** Si cambias de estrategia, se borrará lo que hayas puesto.
+    * **Nocturnas:** Define los periodos de nocturnidad para que el calendario se pinte de verde oscuro.
+    * **Guardar/Cargar:** Usa estos botones para no perder tu trabajo si cierras la pestaña.
+
+    ### 2. Selección de Vacaciones (Columna Izquierda)
+    * Selecciona tu **Nombre**.
+    * Usa el deslizador de **Meses** para buscar huecos.
+    * En las pestañas, verás los tipos de bloque disponibles (ej. 10 días).
+    * Pulsa **➕** para añadir un periodo. El sistema te avisará si "chocas" con un compañero.
+    
+    ### 3. Revisión y Cuadrante (Columna Derecha y Abajo)
+    * El calendario de la derecha te muestra cómo queda tu turno.
+    * Abajo del todo, pulsa **"🔄 Calcular Cuadrante"** para generar el Excel definitivo con las coberturas automáticas.
+    """)
+
+st.warning("⚠️ AVISO: Esta aplicación está sujeta a modificaciones y mejoras continuas. Es posible que surjan errores puntuales o cambios en la lógica. Revisa siempre el Excel final.")
 
 TEAMS = ['A', 'B', 'C']
 ROLES = ["Jefe", "Subjefe", "Conductor", "Bombero"]
@@ -194,7 +219,6 @@ def check_conflict_strict(start_idx, duration, person, occupation_map, base_sch,
     my_start_natural = start_idx
     my_end_natural = start_idx + duration - 1
 
-    # 1. Conflictos Diarios (Turnos T)
     for i in range(start_idx, start_idx + duration):
         d_obj = datetime.date(year, 1, 1) + timedelta(days=i)
         if d_obj in transition_dates:
@@ -203,7 +227,6 @@ def check_conflict_strict(start_idx, duration, person, occupation_map, base_sch,
         for occ in occupants:
             if occ['Turno'] == person['Turno']: return True
     
-    # 2. Conflictos Globales (Capacidad Natural)
     for d_check in range(my_start_natural, my_end_natural + 1):
         count_absent = 0
         for req in current_requests:
@@ -214,7 +237,6 @@ def check_conflict_strict(start_idx, duration, person, occupation_map, base_sch,
                 count_absent += 1
         if count_absent >= 2: return True 
 
-    # 3. Conflicto Categoría (Jefe con Jefe, excepto Bombero)
     if person['Rol'] != 'Bombero':
         for req in current_requests:
             if req['Nombre'] == person['Nombre']: continue 
@@ -700,9 +722,6 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
 # 3. INTERFAZ STREAMLIT
 # ==============================================================================
 
-st.title("🚒 Gestor V52.0: Libre Acceso")
-st.caption("Los datos se borrarán al cerrar la pestaña.")
-
 # Inicialización de ESTADO
 if 'raw_requests_df' not in st.session_state:
     st.session_state.raw_requests_df = pd.DataFrame(columns=["Nombre", "Inicio", "Fin"])
@@ -814,7 +833,7 @@ with c_main:
         month_range = st.select_slider("📅 Meses:", options=MESES, value=(MESES[0], MESES[-1]))
         options = get_available_blocks_for_person(selected_person, st.session_state.roster_data, current_requests, year_val, st.session_state.nights, month_range, strategy_key)
         
-        # --- LÓGICA DE CONTADORES ---
+        # --- LÓGICA DE CONTADORES VISUALES ---
         p_row = st.session_state.roster_data[st.session_state.roster_data['Nombre'] == selected_person].iloc[0]
         p_turn = p_row['Turno']
         base_sch, _ = generate_base_schedule(year_val)
@@ -838,25 +857,33 @@ with c_main:
             key = (item['dur'], item['target'])
             limit_counts[key] = limit_counts.get(key, 0) + 1
         
-        # 3. Generar etiquetas
+        # 3. Mostrar Tabs con contadores visuales grandes
         block_defs = STRATEGIES[strategy_key]['blocks']
-        tab_labels = []
-        for b_def in block_defs:
-            d = b_def['dur']
-            c = b_def['cred']
-            used = used_counts.get((d,c), 0)
-            limit = limit_counts.get((d,c), 0)
-            label = f"{b_def['label']} ({used}/{limit})"
-            tab_labels.append(label)
-        
-        # 4. Mostrar Tabs con etiquetas dinámicas
-        tabs = st.tabs(tab_labels)
+        tabs = st.tabs([b['label'] for b in block_defs])
         
         for i, b_def in enumerate(block_defs):
-            key = b_def['label']
             with tabs[i]:
-                available_opts = options.get(key, [])
-                if not available_opts: st.caption("Sin opciones.")
+                # Datos del contador
+                d_val = b_def['dur']
+                c_val = b_def['cred']
+                used = used_counts.get((d_val, c_val), 0)
+                limit = limit_counts.get((d_val, c_val), 0)
+                
+                # --- VISUALIZACIÓN GRANDE ---
+                c_info, c_bar = st.columns([1, 3])
+                with c_info:
+                    st.metric(label="Usados / Totales", value=f"{used} / {limit}")
+                with c_bar:
+                    if limit > 0:
+                        pct = min(used / limit, 1.0)
+                        st.progress(pct, text=f"Progreso: {int(pct*100)}%")
+                    else:
+                        st.info("Bloque ilimitado o especial")
+                st.divider()
+                # -----------------------------
+
+                available_opts = options.get(b_def['label'], [])
+                if not available_opts: st.caption("Sin opciones en este rango.")
                 else:
                     with st.container(height=300):
                         for opt in available_opts[:100]: 
@@ -920,3 +947,7 @@ if st.session_state.locked_result:
         with cols_eq[i % 3]:
             color = "green" if 121 <= count <= 123 else "red"
             st.markdown(f"**{name}**: <span style='color:{color}'>{count}</span>", unsafe_allow_html=True)
+
+# --- CRÉDITOS INFERIORES ---
+st.markdown("---")
+st.markdown("<h5 style='text-align: center; color: #888;'>Diseñado por Marcos Esteban Vives</h5>", unsafe_allow_html=True)
