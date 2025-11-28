@@ -16,7 +16,7 @@ from operator import itemgetter
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V52.0 - Final", page_icon="🚒")
+st.set_page_config(layout="wide", page_title="Gestor V52.0 - Final Auto", page_icon="🚒")
 
 TEAMS = ['A', 'B', 'C']
 ROLES = ["Jefe", "Subjefe", "Conductor", "Bombero"]
@@ -114,7 +114,7 @@ DEFAULT_ROSTER = [
 ]
 
 # ==============================================================================
-# 2. LÓGICA DE NEGOCIO (ESTRICTA Y REFORZADA)
+# 2. LÓGICA DE NEGOCIO
 # ==============================================================================
 
 def get_short_id(name, role, turn):
@@ -187,7 +187,6 @@ def get_clustered_dates(available_idxs, needed_count):
         else: break
     return sorted(selected)
 
-# --- VALIDACIÓN ESTRICTA REFORZADA ---
 def check_conflict_strict(start_idx, duration, person, occupation_map, base_sch, year, transition_dates, roster_df, current_requests):
     total_days = len(base_sch['A'])
     if start_idx + duration > total_days: return True
@@ -208,7 +207,6 @@ def check_conflict_strict(start_idx, duration, person, occupation_map, base_sch,
             if occ['Turno'] == person['Turno']: return True
     
     # 2. Chequeo de CAPACIDAD GLOBAL (Max 2 fuera SIMULTÁNEAMENTE)
-    # Contamos cuántas personas hay de vacaciones (naturales) en mis días
     for d_check in range(my_start_natural, my_end_natural + 1):
         count_absent = 0
         for req in current_requests:
@@ -219,7 +217,7 @@ def check_conflict_strict(start_idx, duration, person, occupation_map, base_sch,
                 count_absent += 1
         
         if count_absent >= 2: 
-            return True # Ya hay 2 fuera este día, no cabe un tercero.
+            return True 
 
     # 3. Chequeo de Solapamiento Natural por CATEGORÍA (PDF Norma 11)
     if person['Rol'] != 'Bombero':
@@ -230,7 +228,7 @@ def check_conflict_strict(start_idx, duration, person, occupation_map, base_sch,
                 other_start = req['Inicio'].timetuple().tm_yday - 1
                 other_end = req['Fin'].timetuple().tm_yday - 1
                 if (my_start_natural <= other_end) and (my_end_natural >= other_start):
-                    return True # CONFLICTO: Ya hay un compañero de mi misma categoría fuera.
+                    return True
 
     return False
 
@@ -276,7 +274,7 @@ def get_available_blocks_for_person(person_name, roster_df, current_requests, ye
             if not check_conflict_strict(d, duration, person, occupation_map, base_sch, year, transition_dates, roster_df, current_requests):
                 overlap = False
                 for ms in my_current_slots:
-                    if not (d + duration - 1 < ms[0] - 2 or d > ms[1] + 2): overlap = True; break
+                    if not (d + duration - 1 < ms[0] or d > ms[1]): overlap = True; break
                 
                 if not overlap:
                     credits = 0
@@ -303,21 +301,33 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key):
     for person in people:
         my_slots = []
         current_recipe = RECIPE.copy()
-        random.shuffle(current_recipe) 
+        
+        # MEJORA: Ordenar bloques de MAYOR a MENOR duración. 
+        # Es más difícil encajar bloques de 10 días que de 6.
+        current_recipe.sort(key=lambda x: x['dur'], reverse=True)
+        
         credits_got = 0
         
         for block in current_recipe:
             duration = block['dur']
             target = block['target']
             options = []
+            
+            # Buscar todos los huecos posibles en el año
             for d in range(0, total_days - duration):
                 c = sum([1 for k in range(d, d+duration) if base_sch[person['Turno']][k] == 'T'])
                 if c == target:
+                     # Chequeo estricto
                      if not check_conflict_strict(d, duration, person, occupation_map, base_sch, year, transition_dates, roster_df, generated_requests):
                          options.append(d)
+            
+            # Elegir aleatoriamente entre los huecos válidos
             random.shuffle(options)
+            
             for start in options:
-                overlap = any(start < s[0]+s[1]+2 and start+duration > s[0]-2 for s in my_slots)
+                # Chequeo de solapamiento con MIS propios bloques ya asignados
+                overlap = any(start < s[0]+s[1] and start+duration > s[0] for s in my_slots)
+                
                 if not overlap:
                     book_slot_gen(start, duration, person, occupation_map)
                     my_slots.append((start, duration))
@@ -329,14 +339,16 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key):
                     })
                     break 
         
-        if credits_got < 13:
+        # Relleno de créditos sueltos solo si es estrictamente necesario y no se cumplió el objetivo
+        # En estrategias como "Safe" o "Standard", intentamos llegar a 12-13 créditos
+        if credits_got < 12:
             all_days_random = list(range(total_days))
             random.shuffle(all_days_random)
             for d in all_days_random:
                 if credits_got >= 13: break
                 if base_sch[person['Turno']][d] == 'T':
                     if not check_conflict_strict(d, 1, person, occupation_map, base_sch, year, transition_dates, roster_df, generated_requests):
-                        overlap = any(d < s[0]+s[1]+2 and d > s[0]-2 for s in my_slots)
+                        overlap = any(d < s[0]+s[1] and d > s[0] for s in my_slots)
                         if not overlap:
                             book_slot_gen(d, 1, person, occupation_map)
                             my_slots.append((d, 1))
@@ -674,11 +686,10 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
             if str(s) == 'T' or str(s).startswith('T*') or str(s) == 'T+': total_worked += 1
         ws2.append([name, p['Turno'], p['Rol'], total_worked, v_credits, t_cover, v_natural])
 
-    # HOJA 3: DETALLE PERIODOS (SOLICITUD DEL USUARIO)
+    # HOJA 3: DETALLE PERIODOS
     ws3 = wb.create_sheet("Listado Periodos")
     ws3.append(["Nombre", "Rol", "Turno", "Inicio", "Fin", "Días"])
     
-    # Preparamos datos ordenados
     reqs_data = []
     for req in requests:
         p_row = roster_df[roster_df['Nombre'] == req['Nombre']].iloc[0]
@@ -691,9 +702,7 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
             "Fin": req['Fin'],
             "Días": dur
         })
-    # Ordenar por Turno -> Rol -> Nombre -> Fecha Inicio
     reqs_data.sort(key=lambda x: (x['Turno'], x['Rol'], x['Nombre'], x['Inicio']))
-    
     for r in reqs_data:
         ws3.append([r['Nombre'], r['Rol'], r['Turno'], r['Inicio'], r['Fin'], r['Días']])
 
