@@ -16,7 +16,7 @@ from operator import itemgetter
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V52.0 - Final Secure", page_icon="🚒")
+st.set_page_config(layout="wide", page_title="Gestor V52.0 - Final Pro", page_icon="🚒")
 
 TEAMS = ['A', 'B', 'C']
 ROLES = ["Jefe", "Subjefe", "Conductor", "Bombero"]
@@ -194,6 +194,7 @@ def check_conflict_strict(start_idx, duration, person, occupation_map, base_sch,
     my_start_natural = start_idx
     my_end_natural = start_idx + duration - 1
 
+    # 1. Conflictos Diarios (Turnos T)
     for i in range(start_idx, start_idx + duration):
         d_obj = datetime.date(year, 1, 1) + timedelta(days=i)
         if d_obj in transition_dates:
@@ -202,6 +203,7 @@ def check_conflict_strict(start_idx, duration, person, occupation_map, base_sch,
         for occ in occupants:
             if occ['Turno'] == person['Turno']: return True
     
+    # 2. Conflictos Globales (Capacidad Natural)
     for d_check in range(my_start_natural, my_end_natural + 1):
         count_absent = 0
         for req in current_requests:
@@ -212,6 +214,7 @@ def check_conflict_strict(start_idx, duration, person, occupation_map, base_sch,
                 count_absent += 1
         if count_absent >= 2: return True 
 
+    # 3. Conflicto Categoría (Jefe con Jefe, excepto Bombero)
     if person['Rol'] != 'Bombero':
         for req in current_requests:
             if req['Nombre'] == person['Nombre']: continue 
@@ -717,17 +720,17 @@ stats = calculate_stats(st.session_state.roster_data, current_requests, year_val
 with st.sidebar:
     st.header("Panel de Control")
     
+    # --- CALLBACK DE LIMPIEZA ---
     def clear_on_strategy_change():
         st.session_state.raw_requests_df = pd.DataFrame(columns=["Nombre", "Inicio", "Fin"])
         st.session_state.locked_result = None
         st.toast("🧹 Estrategia cambiada: Se han reseteado las vacaciones.", icon="⚠️")
 
-    # The widget
     strategy_key = st.selectbox(
         "🎯 Estrategia",
         list(STRATEGIES.keys()),
         format_func=lambda x: STRATEGIES[x]['name'],
-        on_change=clear_on_strategy_change 
+        on_change=clear_on_strategy_change
     )
     
     with st.expander("🌑 Configurar Nocturnas"):
@@ -811,12 +814,12 @@ with c_main:
         month_range = st.select_slider("📅 Meses:", options=MESES, value=(MESES[0], MESES[-1]))
         options = get_available_blocks_for_person(selected_person, st.session_state.roster_data, current_requests, year_val, st.session_state.nights, month_range, strategy_key)
         
-        # --- NUEVA LÓGICA DE CONTADORES ---
+        # --- LÓGICA DE CONTADORES ---
         p_row = st.session_state.roster_data[st.session_state.roster_data['Nombre'] == selected_person].iloc[0]
         p_turn = p_row['Turno']
         base_sch, _ = generate_base_schedule(year_val)
         
-        # Calcular USADOS
+        # 1. Calcular lo que ya tengo
         used_counts = {}
         for r in my_reqs:
             dur = (r['Fin'] - r['Inicio']).days + 1
@@ -828,14 +831,14 @@ with c_main:
             key = (dur, cred)
             used_counts[key] = used_counts.get(key, 0) + 1
 
-        # Calcular LÍMITES
+        # 2. Calcular los límites de la estrategia actual
         recipe = STRATEGIES[strategy_key]['auto_recipe']
         limit_counts = {}
         for item in recipe:
             key = (item['dur'], item['target'])
             limit_counts[key] = limit_counts.get(key, 0) + 1
         
-        # Generar Labels
+        # 3. Generar etiquetas
         block_defs = STRATEGIES[strategy_key]['blocks']
         tab_labels = []
         for b_def in block_defs:
@@ -845,8 +848,8 @@ with c_main:
             limit = limit_counts.get((d,c), 0)
             label = f"{b_def['label']} ({used}/{limit})"
             tab_labels.append(label)
-        # ------------------------------------
-
+        
+        # 4. Mostrar Tabs con etiquetas dinámicas
         tabs = st.tabs(tab_labels)
         
         for i, b_def in enumerate(block_defs):
