@@ -16,7 +16,7 @@ from operator import itemgetter
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V52.0 - Final Visual", page_icon="🚒")
+st.set_page_config(layout="wide", page_title="Gestor V52.0 - Final Dec Fix", page_icon="🚒")
 
 # --- CRÉDITOS SUPERIORES ---
 st.markdown("<h5 style='text-align: center; color: #888;'>Diseñado por Marcos Esteban Vives</h5>", unsafe_allow_html=True)
@@ -219,6 +219,7 @@ def check_conflict_strict(start_idx, duration, person, occupation_map, base_sch,
     my_start_natural = start_idx
     my_end_natural = start_idx + duration - 1
 
+    # 1. Conflictos Diarios (Turnos T)
     for i in range(start_idx, start_idx + duration):
         d_obj = datetime.date(year, 1, 1) + timedelta(days=i)
         if d_obj in transition_dates:
@@ -227,6 +228,7 @@ def check_conflict_strict(start_idx, duration, person, occupation_map, base_sch,
         for occ in occupants:
             if occ['Turno'] == person['Turno']: return True
     
+    # 2. Conflictos Globales (Capacidad Natural)
     for d_check in range(my_start_natural, my_end_natural + 1):
         count_absent = 0
         for req in current_requests:
@@ -237,6 +239,7 @@ def check_conflict_strict(start_idx, duration, person, occupation_map, base_sch,
                 count_absent += 1
         if count_absent >= 2: return True 
 
+    # 3. Conflicto Categoría (Jefe con Jefe, excepto Bombero)
     if person['Rol'] != 'Bombero':
         for req in current_requests:
             if req['Nombre'] == person['Nombre']: continue 
@@ -277,7 +280,8 @@ def get_available_blocks_for_person(person_name, roster_df, current_requests, ye
     block_defs = STRATEGIES[strategy_key]['blocks']
     options = {b['label']: [] for b in block_defs}
     
-    for d in range(total_days - 15): 
+    # CORRECCIÓN DEC 31: Iteramos hasta el final, no paramos antes.
+    for d in range(total_days): 
         d_date = datetime.date(year, 1, 1) + timedelta(days=d)
         
         if d_date.month < start_month_idx or d_date.month > end_month_idx: continue
@@ -287,6 +291,9 @@ def get_available_blocks_for_person(person_name, roster_df, current_requests, ye
             target_cred = b_def['cred']
             label_key = b_def['label']
             
+            # Chequeo de seguridad: ¿Cabe el bloque en el año?
+            if d + duration > total_days: continue
+
             if not check_conflict_strict(d, duration, person, occupation_map, base_sch, year, transition_dates, roster_df, current_requests):
                 overlap = False
                 for ms in my_current_slots:
