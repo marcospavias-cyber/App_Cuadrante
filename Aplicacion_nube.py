@@ -16,7 +16,7 @@ from operator import itemgetter
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V52.0 - Visual Fix", page_icon="🚒")
+st.set_page_config(layout="wide", page_title="Gestor V52.0 - Final Visual", page_icon="🚒")
 
 # --- CRÉDITOS SUPERIORES ---
 st.markdown("<h5 style='text-align: center; color: #888;'>Diseñado por Marcos Esteban Vives</h5>", unsafe_allow_html=True)
@@ -25,16 +25,16 @@ st.title("🚒 Gestor V52.0: Sistema Integral")
 # --- MANUAL Y AVISO ---
 with st.expander("📘 MANUAL DE USUARIO (Haz clic para desplegar)", expanded=False):
     st.markdown("""
-    ### 🚀 Novedades: Visualización Real
-    1. **Mapa de Calor:** Ahora muestra la ocupación **REAL** (Días naturales). Si la casilla está ROJA, es que hay 2 personas fuera, trabajen o no ese día.
-    2. **Estrategia Elástica:** Incluye bloques de relleno (🧩) para ajustes finos.
-    3. **Ayudas:** Busca las Estrellas (⭐) y usa el "A Medida" si necesitas fechas libres.
+    ### 🚀 Novedades: Excel Visual Mejorado
+    * **Excel Final:** Ahora el cuadrante refleja tus vacaciones naturales completas. Los días de guardia salen en color **Oro Fuerte** y los días libres dentro de tus vacaciones en **Oro Suave**.
+    * **Estrategia Elástica:** Usa bloques grandes y rellena con fichas pequeñas (🧩).
+    * **Ayudas:** Busca las estrellas (⭐) para fechas óptimas.
 
     ### ⚙️ Flujo de Trabajo
     1. Selecciona tu **Nombre**.
     2. Elige tu **Estrategia**.
-    3. Rellena el calendario.
-    4. Pulsa **"🔄 Calcular Cuadrante"** al terminar.
+    3. Rellena el calendario (usa "A Medida" si necesitas fechas libres).
+    4. Pulsa **"🔄 Calcular Cuadrante"** para generar el Excel.
     """)
 
 st.warning("⚠️ AVISO: Aplicación sujeta a modificaciones. Revisa siempre el Excel final generado.")
@@ -157,7 +157,7 @@ DEFAULT_ROSTER = [
 ]
 
 # ==============================================================================
-# 2. LÓGICA DE NEGOCIO (OPTIMIZADA)
+# 2. LÓGICA DE NEGOCIO
 # ==============================================================================
 
 def get_short_id(name, role, turn):
@@ -350,7 +350,6 @@ def get_available_blocks_for_person(person_name, roster_df, current_requests, ye
             is_valid, reason, culprit = analyze_slot(d, duration, person, occupation_map_T, base_sch, year, transition_dates, daily_absent, daily_roles)
 
             if is_valid:
-                # Chequeo solapamiento propio
                 overlap = False
                 for ms in my_current_slots:
                     if not (d + duration - 1 < ms[0] or d > ms[1]): overlap = True; break
@@ -365,7 +364,6 @@ def get_available_blocks_for_person(person_name, roster_df, current_requests, ye
                         end_date = start_date + timedelta(days=duration-1)
                         txt = f"{start_date.strftime('%d/%m')} - {end_date.strftime('%d/%m')}"
                         
-                        # --- PUNTUACIÓN DE EFICIENCIA ---
                         score = 0
                         if start_date.day in [1, 11, 21]: score += 2
                         for ms in my_current_slots:
@@ -373,13 +371,9 @@ def get_available_blocks_for_person(person_name, roster_df, current_requests, ye
                                 score += 3
                         
                         icon = "⭐" if score >= 2 else ""
-                        
                         options[label_key].append({
                             'label': f"{icon} {txt}", 
-                            'start': start_date, 
-                            'end': end_date,
-                            'score': score,
-                            'type': 'single'
+                            'start': start_date, 'end': end_date, 'score': score, 'type': 'single'
                         })
             else:
                 credits = 0
@@ -387,11 +381,7 @@ def get_available_blocks_for_person(person_name, roster_df, current_requests, ye
                     if base_sch[person['Turno']][k] == 'T': credits += 1
                 
                 if credits == target_cred:
-                     conflicts_log[label_key].append({
-                         'start': d_date,
-                         'reason': reason,
-                         'culprit': culprit
-                     })
+                     conflicts_log[label_key].append({'start': d_date, 'reason': reason, 'culprit': culprit})
 
     # GENERADOR DE COMBOS
     unique_frags = []
@@ -512,14 +502,13 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key):
                             })
     return generated_requests
 
-# --- RENDERIZADO VISUAL CON FIX DE OCUPACIÓN NATURAL ---
+# --- RENDERIZADO VISUAL ---
 @st.cache_data
 def render_global_occupation_calendar(year, roster_df, requests, night_periods):
     base_sch, total_days = generate_base_schedule(year)
     transition_dates = get_night_transition_dates(night_periods)
     occ_map = {d: [] for d in range(total_days)}
     
-    # VISUALIZACIÓN NATURAL: Se marca todo el rango (Inicio -> Fin)
     for req in requests:
         name = req['Nombre']
         if name not in roster_df['Nombre'].values: continue
@@ -528,6 +517,7 @@ def render_global_occupation_calendar(year, roster_df, requests, night_periods):
         s = req['Inicio'].timetuple().tm_yday - 1
         e = req['Fin'].timetuple().tm_yday - 1
         for d in range(s, e+1):
+            # VISUALIZACIÓN COMPLETA (T y L)
             occ_map[d].append(get_short_id(name, person_row['Rol'], turn))
 
     html = "<div style='font-family:monospace; font-size:9px;'>"
@@ -774,6 +764,8 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
     s_VR = PatternFill("solid", fgColor="FFFFE0"); s_Cov = PatternFill("solid", fgColor="FFC7CE")
     s_L = PatternFill("solid", fgColor="F2F2F2"); s_Night = PatternFill("solid", fgColor="A6A6A6")
     s_Extra = PatternFill("solid", fgColor="ADD8E6"); s_Free = PatternFill("solid", fgColor="E6E6FA")
+    s_VL = PatternFill("solid", fgColor="FFE699") # Lighter Gold
+    
     font_bold = Font(bold=True); font_red = Font(color="9C0006", bold=True)
     align_c = Alignment(horizontal="center", vertical="center")
     border_thin = Side(border_style="thin", color="000000")
@@ -809,6 +801,7 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
                         fill = s_L; val = ""
                         if st_val == 'T': fill = s_T; val = "T"
                         elif st_val == 'V': fill = s_V; val = "V"
+                        elif st_val == 'V(L)': fill = s_VL; val = "L"
                         elif st_val == 'V(R)': 
                             fill = s_VR; val = "v"
                             if strategy_key == 'sniper': fill = s_V; val = "V" 
@@ -1008,7 +1001,7 @@ with c_main:
             key = (item['dur'], item['target'])
             limit_counts[key] = limit_counts.get(key, 0) + 1
         
-        # 3. Mostrar Tabs
+        # 3. Mostrar Tabs con contadores visuales grandes
         # AÑADIMOS PESTAÑA "A MEDIDA" AL FINAL
         block_defs = STRATEGIES[strategy_key]['blocks']
         tab_labels = [b['label'] for b in block_defs] + ["✨ A Medida (Libre)"]
