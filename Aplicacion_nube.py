@@ -16,7 +16,7 @@ from operator import itemgetter
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V58.0 - Regla C-Noche-B", page_icon="🚒")
+st.set_page_config(layout="wide", page_title="Gestor V59.0 - Critical Alert", page_icon="🚒")
 
 # --- ESTILOS VISUALES ---
 st.markdown("""
@@ -28,7 +28,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V58.0 (Turno C Noche + Cobertura B)</h5>", unsafe_allow_html=True)
+st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V59.0 (Critical Night Alert)</h5>", unsafe_allow_html=True)
 st.title("🚒 Gestor de Cuadrantes: Versión Definitiva")
 
 TEAMS = ['A', 'B', 'C']
@@ -591,12 +591,20 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
 
     adjustments_log = []
     
+    # 2. Asignar Coberturas
+    # En días de transición, buscamos candidatos específicos
+    transition_dates = get_night_transition_dates(night_periods)
+    
     for d in range(total_days):
         absent_people = day_vacations[d]
         if not absent_people: continue
         
         current_day_coverers = []
-        absent_people.sort(key=lambda x: 0 if "Jefe" in x or "Subjefe" in x else 1)
+        # Si es noche crítica, intentamos cubrir primero a C
+        current_date = datetime.date(year, 1, 1) + timedelta(days=d)
+        is_crit_night = (current_date in transition_dates)
+        
+        absent_people.sort(key=lambda x: (0 if "C" in name_to_turn[x] and is_crit_night else 1, 0 if "Jefe" in x else 1))
 
         for name_missing in absent_people:
             person_row = roster_df[roster_df['Nombre'] == name_missing].iloc[0]
@@ -611,11 +619,14 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
                     # En cobertura forzosa nocturna (B cubre C), relajamos regla descanso si es necesario
                     # Pero intentamos mantenerla por defecto
                     prev = final_schedule[c][d-1] if d > 0 else 'L'
-                    prev2 = final_schedule[c][d-2] if d > 1 else 'L'
-                    worked_prev = prev.startswith('T')
-                    worked_prev2 = prev2.startswith('T')
-                    if not (worked_prev and worked_prev2): 
-                        valid.append(c)
+                    next_day = final_schedule[c][d+1] if d < total_days-1 else 'L'
+                    
+                    # Si estamos en noche critica cubriendo a C, se permite doblar (excepcion operativa)
+                    if is_crit_night and name_to_turn[name_missing] == 'C':
+                         valid.append(c)
+                    else:
+                        if not (str(prev).startswith('T') or str(next_day).startswith('T')):
+                            valid.append(c)
                         
                 if valid:
                     valid.sort(key=lambda x: (turn_coverage_counters[name_to_turn[x]], person_coverage_counters[x], random.random()))
@@ -626,6 +637,10 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
                     unavailable_map[d].add(chosen)
                     turn_coverage_counters[name_to_turn[chosen]] += 1
                     person_coverage_counters[chosen] += 1
+            else:
+                # Si no hay candidato y es noche critica del C, marcar en rojo
+                if is_crit_night and name_to_turn[name_missing] == 'C':
+                    final_schedule[name_missing][d] = "V(⚠)" # Marca visual de fallo
 
     # Relleno de francotiradores/sobrantes original
     fill_log = {}
@@ -649,7 +664,7 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
     s_VR = PatternFill("solid", fgColor="FFFFE0"); s_Cov = PatternFill("solid", fgColor="FFC7CE")
     s_L = PatternFill("solid", fgColor="F2F2F2"); s_Night = PatternFill("solid", fgColor="A6A6A6")
     s_Extra = PatternFill("solid", fgColor="ADD8E6"); s_Free = PatternFill("solid", fgColor="E6E6FA")
-    s_VL = PatternFill("solid", fgColor="FFE699") 
+    s_VL = PatternFill("solid", fgColor="FFE699"); s_Alert = PatternFill("solid", fgColor="FF0000")
     
     font_bold = Font(bold=True); font_red = Font(color="9C0006", bold=True)
     align_c = Alignment(horizontal="center", vertical="center")
@@ -694,6 +709,7 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
                             val = get_short_id(cov_p['Nombre'], cov_p['Rol'], cov_p['Turno'])
                         elif st_val == 'T+': fill = s_Extra; val = "T+"
                         elif st_val == 'L*': fill = s_Free; val = "L"
+                        elif st_val == 'V(⚠)': fill = s_Alert; val = "⚠" # ALERTA VISUAL
                         
                         if is_in_night_period(d_y, year, night_periods): fill = s_Night
                         cell.fill = fill; cell.value = val
@@ -828,7 +844,7 @@ with st.sidebar:
 
     st.markdown("---")
     if st.button("🎲 Rellenar Automático (Estricto)", type="primary"):
-        with st.spinner("Optimizando cuadrante (C-Night + B-Cover)..."):
+        with st.spinner("Optimizando cuadrante (3 Rondas Estrictas: Bloques -> Rescate -> Relleno)..."):
             new_reqs = auto_generate_schedule(st.session_state.roster_data, year_val, st.session_state.nights, strategy_key, current_requests)
             if new_reqs:
                 df_new = pd.DataFrame(new_reqs)
