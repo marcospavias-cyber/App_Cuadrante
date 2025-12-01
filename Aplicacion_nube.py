@@ -16,7 +16,7 @@ from operator import itemgetter
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V54.1 - Final Stable", page_icon="🚒")
+st.set_page_config(layout="wide", page_title="Gestor V55.0 - Exhaustive", page_icon="🚒")
 
 # --- ESTILOS VISUALES ---
 st.markdown("""
@@ -28,7 +28,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V54.1 (Strict Balance & Fixes)</h5>", unsafe_allow_html=True)
+st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V55.0 (Exhaustive Engine)</h5>", unsafe_allow_html=True)
 st.title("🚒 Gestor de Cuadrantes: Versión Definitiva")
 
 TEAMS = ['A', 'B', 'C']
@@ -199,7 +199,7 @@ def analyze_slot(start_idx, duration, person, occupation_map_T, base_sch, year, 
     return True, "OK", None
 
 # ==============================================================================
-# 3. ALGORITMO GENERADOR (VERSION ESTRICTA MULTI-PASS)
+# 3. ALGORITMO GENERADOR (VERSION EXHAUSTIVA)
 # ==============================================================================
 
 def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current_reqs):
@@ -211,7 +211,6 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
     daily_absent = {i: [] for i in range(total_days)}
     daily_roles = {i: [] for i in range(total_days)}
     
-    # Cargar ocupación
     for req in current_reqs:
         p_row = roster_df[roster_df['Nombre'] == req['Nombre']]
         if p_row.empty: continue
@@ -228,7 +227,6 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
     generated_requests = []
     people = roster_df.to_dict('records')
     
-    # Helper Stats
     def get_person_stats(p_name, p_turn, extra_reqs):
         all_r = [r for r in current_reqs if r['Nombre'] == p_name] + \
                 [r for r in extra_reqs if r['Nombre'] == p_name]
@@ -249,7 +247,7 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
     RECIPE = STRATEGIES[strategy_key]['auto_recipe']
     
     # ==============================================================================
-    # RONDA 1: ESTRATEGIA PRINCIPAL (ESTRICTA)
+    # RONDA 1: ESTRATEGIA PRINCIPAL
     # ==============================================================================
     random.shuffle(people)
     
@@ -263,7 +261,6 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
             duration = block['dur']
             target = block['target']
             
-            # --- LÍMITE ESTRICTO ---
             if cred + target > 13: continue 
             if nat + duration > 39: continue 
             
@@ -303,8 +300,9 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
                     my_slots.append((start, duration))
 
     # ==============================================================================
-    # RONDA 2: EQUILIBRADO DE CRÉDITOS (RESCATE ESTRICTO)
+    # RONDA 2: EQUILIBRADO EXHAUSTIVO (Créditos)
     # ==============================================================================
+    # Reordenamos por necesidad real de créditos
     people.sort(key=lambda x: get_person_stats(x['Nombre'], x['Turno'], generated_requests)[0])
     rescue_blocks = [{"dur": 4, "target": 1}, {"dur": 3, "target": 1}, {"dur": 1, "target": 1}]
 
@@ -312,18 +310,22 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
         cred, nat, my_slots = get_person_stats(person['Nombre'], person['Turno'], generated_requests)
         if cred >= 13: continue
         
+        # Escaneo TOTAL del año (barajado) para no dejar ningún día válido atrás
+        all_possible_days = list(range(total_days))
+        random.shuffle(all_possible_days)
+
         for r_block in rescue_blocks:
-            for _ in range(20): 
-                if cred >= 13: break
-                
+            # Mientras falten créditos y quepa el bloque
+            while cred + r_block['target'] <= 13:
                 duration = r_block['dur']
                 target = r_block['target']
+                if nat + duration > 39: break 
                 
-                if cred + target > 13: continue 
-                if nat + duration > 39: continue
-                
-                valid_starts = []
-                for d in range(0, total_days - duration):
+                found_slot = False
+                for d in all_possible_days:
+                    if d + duration > total_days: continue
+                    
+                    # Comprobación de hueco
                     if len(daily_absent[d]) >= 2: continue
                     block_broken = False
                     for k in range(d, d+duration):
@@ -333,33 +335,36 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
                     c = sum([1 for k in range(d, d+duration) if base_sch[person['Turno']][k] == 'T'])
                     if c >= target:
                          is_valid, _, _ = analyze_slot(d, duration, person, occupation_map_T, base_sch, year, transition_dates, daily_absent, daily_roles)
-                         if is_valid: valid_starts.append(d)
+                         if is_valid:
+                             # Verificar solapamiento propio
+                             overlap = False
+                             for ms in my_slots:
+                                 if not (d + duration - 1 < ms[0] or d > ms[0] + ms[1] - 1): overlap = True; break
+                             
+                             if not overlap:
+                                 # ASIGNAR
+                                 book_slot_gen(d, duration, person, occupation_map_T)
+                                 for k in range(d, d + duration):
+                                     daily_absent[k].append(person['Nombre'])
+                                     daily_roles[k].append(person['Rol'])
+                                 
+                                 generated_requests.append({
+                                     "Nombre": person['Nombre'],
+                                     "Inicio": datetime.date(year, 1, 1) + timedelta(days=d),
+                                     "Fin": datetime.date(year, 1, 1) + timedelta(days=d+duration-1)
+                                 })
+                                 cred += target
+                                 nat += duration
+                                 my_slots.append((d, duration))
+                                 found_slot = True
+                                 break # Salir del for de días, reiniciar while para buscar otro
                 
-                if valid_starts:
-                    start = random.choice(valid_starts)
-                    overlap = False
-                    for ms in my_slots:
-                        if not (start + duration - 1 < ms[0] or start > ms[0] + ms[1] - 1): 
-                            overlap = True; break
-                    
-                    if not overlap:
-                        book_slot_gen(start, duration, person, occupation_map_T)
-                        for k in range(start, start + duration):
-                            daily_absent[k].append(person['Nombre'])
-                            daily_roles[k].append(person['Rol'])
-                        
-                        generated_requests.append({
-                            "Nombre": person['Nombre'],
-                            "Inicio": datetime.date(year, 1, 1) + timedelta(days=start),
-                            "Fin": datetime.date(year, 1, 1) + timedelta(days=start+duration-1)
-                        })
-                        cred += target
-                        nat += duration
-                        my_slots.append((start, duration))
+                if not found_slot: break # No cabe más de este tamaño
 
     # ==============================================================================
-    # RONDA 3: RELLENO FINAL (DÍAS NATURALES ESTRICTO)
+    # RONDA 3: RELLENO FINAL EXHAUSTIVO (Naturales)
     # ==============================================================================
+    # Reordenamos por falta de días naturales
     people.sort(key=lambda x: get_person_stats(x['Nombre'], x['Turno'], generated_requests)[1])
 
     for person in people:
@@ -381,6 +386,7 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
 
                 is_working_day = (base_sch[person['Turno']][d] == 'T')
                 
+                # --- LÍMITE ESTRICTO ---
                 if is_working_day and cred >= 13: continue
                 if is_working_day and (cred + 1 > 13): continue
                 
@@ -406,7 +412,7 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
     return generated_requests
 
 # ==============================================================================
-# 4. RENDER Y EXCEL (VISUALIZACIÓN RESTAURADA)
+# 4. RENDER Y EXCEL
 # ==============================================================================
 
 @st.cache_data
@@ -814,7 +820,7 @@ with st.sidebar:
 
     st.markdown("---")
     if st.button("🎲 Rellenar Automático (Estricto)", type="primary"):
-        with st.spinner("Optimizando cuadrante (3 Rondas Estrictas: Bloques -> Rescate -> Relleno)..."):
+        with st.spinner("Optimizando cuadrante (Exhaustivo para Jefe C)..."):
             new_reqs = auto_generate_schedule(st.session_state.roster_data, year_val, st.session_state.nights, strategy_key, current_requests)
             if new_reqs:
                 df_new = pd.DataFrame(new_reqs)
