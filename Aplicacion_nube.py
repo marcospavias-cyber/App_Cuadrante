@@ -16,7 +16,7 @@ from operator import itemgetter
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V55.0 - Exhaustive", page_icon="🚒")
+st.set_page_config(layout="wide", page_title="Gestor V58.0 - Regla C-Noche-B", page_icon="🚒")
 
 # --- ESTILOS VISUALES ---
 st.markdown("""
@@ -28,7 +28,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V55.0 (Exhaustive Engine)</h5>", unsafe_allow_html=True)
+st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V58.0 (Turno C Noche + Cobertura B)</h5>", unsafe_allow_html=True)
 st.title("🚒 Gestor de Cuadrantes: Versión Definitiva")
 
 TEAMS = ['A', 'B', 'C']
@@ -165,7 +165,7 @@ def book_slot_gen(start_idx, duration, person, occupation_map):
         if i not in occupation_map: occupation_map[i] = []
         occupation_map[i].append(person)
 
-# --- DETECTOR DE CONFLICTOS ---
+# --- DETECTOR DE CONFLICTOS (MODIFICADO: PERMISO PARA TURNO C) ---
 def analyze_slot(start_idx, duration, person, occupation_map_T, base_sch, year, transition_dates, daily_absent, daily_roles):
     total_days = len(base_sch['A'])
     if start_idx + duration > total_days: return False, "Fuera de año", None
@@ -174,20 +174,26 @@ def analyze_slot(start_idx, duration, person, occupation_map_T, base_sch, year, 
     my_end_natural = start_idx + duration - 1
 
     for i in range(start_idx, start_idx + duration):
-        # REGLA SAGRADA: Cupo >= 2
+        # 1. REGLA SAGRADA: Cupo >= 2
         if len(daily_absent[i]) >= 2:
             return False, f"Cupo lleno (2 pers) el día {i+1}", "Sistema"
 
+        # 2. REGLA NOCTURNA (MODIFICADA)
         d_obj = datetime.date(year, 1, 1) + timedelta(days=i)
         if d_obj in transition_dates:
             if base_sch[person['Turno']][i] == 'T': 
-                return False, "Conflicto Nocturna (Día Transición)", "Nocturna"
+                # NUEVA REGLA: Si es turno C, se permite. Si es A o B, se bloquea.
+                if person['Turno'] != 'C':
+                    return False, "Conflicto Nocturna (Solo Turno C permitido)", "Nocturna"
+                # Si es turno C, pasa (True)
         
+        # 3. REGLA TURNO
         occupants_T = occupation_map_T.get(i, [])
         for occ in occupants_T:
             if occ['Turno'] == person['Turno']: 
                 return False, f"Coincide turno T con {occ['Nombre']}", occ['Nombre']
     
+    # 4. REGLA CATEGORÍA
     if person['Rol'] != 'Bombero':
         for d_check in range(my_start_natural, my_end_natural + 1):
             people_today = daily_absent[d_check]
@@ -199,7 +205,7 @@ def analyze_slot(start_idx, duration, person, occupation_map_T, base_sch, year, 
     return True, "OK", None
 
 # ==============================================================================
-# 3. ALGORITMO GENERADOR (VERSION EXHAUSTIVA)
+# 3. ALGORITMO GENERADOR (ESTRICTO Y DEMOCRÁTICO)
 # ==============================================================================
 
 def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current_reqs):
@@ -230,9 +236,7 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
     def get_person_stats(p_name, p_turn, extra_reqs):
         all_r = [r for r in current_reqs if r['Nombre'] == p_name] + \
                 [r for r in extra_reqs if r['Nombre'] == p_name]
-        c = 0
-        nat = 0
-        slots = []
+        c = 0; nat = 0; slots = []
         for r in all_r:
             s = r['Inicio'].timetuple().tm_yday - 1
             e = r['Fin'].timetuple().tm_yday - 1
@@ -240,14 +244,13 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
             nat += dur
             slots.append((s, dur))
             for k in range(s, e+1):
-                if 0 <= k < total_days and base_sch[p_turn][k] == 'T':
-                    c += 1
+                if 0 <= k < total_days and base_sch[p_turn][k] == 'T': c += 1
         return c, nat, slots
 
     RECIPE = STRATEGIES[strategy_key]['auto_recipe']
     
     # ==============================================================================
-    # RONDA 1: ESTRATEGIA PRINCIPAL
+    # RONDA 1: ESTRATEGIA PRINCIPAL (Ahora Turno C puede pillar Noches)
     # ==============================================================================
     random.shuffle(people)
     
@@ -302,7 +305,6 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
     # ==============================================================================
     # RONDA 2: EQUILIBRADO EXHAUSTIVO (Créditos)
     # ==============================================================================
-    # Reordenamos por necesidad real de créditos
     people.sort(key=lambda x: get_person_stats(x['Nombre'], x['Turno'], generated_requests)[0])
     rescue_blocks = [{"dur": 4, "target": 1}, {"dur": 3, "target": 1}, {"dur": 1, "target": 1}]
 
@@ -310,12 +312,10 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
         cred, nat, my_slots = get_person_stats(person['Nombre'], person['Turno'], generated_requests)
         if cred >= 13: continue
         
-        # Escaneo TOTAL del año (barajado) para no dejar ningún día válido atrás
         all_possible_days = list(range(total_days))
         random.shuffle(all_possible_days)
 
         for r_block in rescue_blocks:
-            # Mientras falten créditos y quepa el bloque
             while cred + r_block['target'] <= 13:
                 duration = r_block['dur']
                 target = r_block['target']
@@ -325,7 +325,6 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
                 for d in all_possible_days:
                     if d + duration > total_days: continue
                     
-                    # Comprobación de hueco
                     if len(daily_absent[d]) >= 2: continue
                     block_broken = False
                     for k in range(d, d+duration):
@@ -336,13 +335,11 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
                     if c >= target:
                          is_valid, _, _ = analyze_slot(d, duration, person, occupation_map_T, base_sch, year, transition_dates, daily_absent, daily_roles)
                          if is_valid:
-                             # Verificar solapamiento propio
                              overlap = False
                              for ms in my_slots:
                                  if not (d + duration - 1 < ms[0] or d > ms[0] + ms[1] - 1): overlap = True; break
                              
                              if not overlap:
-                                 # ASIGNAR
                                  book_slot_gen(d, duration, person, occupation_map_T)
                                  for k in range(d, d + duration):
                                      daily_absent[k].append(person['Nombre'])
@@ -357,14 +354,13 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
                                  nat += duration
                                  my_slots.append((d, duration))
                                  found_slot = True
-                                 break # Salir del for de días, reiniciar while para buscar otro
+                                 break 
                 
-                if not found_slot: break # No cabe más de este tamaño
+                if not found_slot: break
 
     # ==============================================================================
     # RONDA 3: RELLENO FINAL EXHAUSTIVO (Naturales)
     # ==============================================================================
-    # Reordenamos por falta de días naturales
     people.sort(key=lambda x: get_person_stats(x['Nombre'], x['Turno'], generated_requests)[1])
 
     for person in people:
@@ -386,7 +382,6 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
 
                 is_working_day = (base_sch[person['Turno']][d] == 'T')
                 
-                # --- LÍMITE ESTRICTO ---
                 if is_working_day and cred >= 13: continue
                 if is_working_day and (cred + 1 > 13): continue
                 
@@ -511,6 +506,7 @@ def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=
     html += "</div>"
     return html
 
+# --- BUSCADOR DE CANDIDATOS (MODIFICADO: REGLA B CUBRE C EN NOCHES) ---
 def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, night_periods, unavailable_map, adjustments_log_current_day=None):
     candidates = []
     missing_role = person_missing['Rol']
@@ -522,6 +518,11 @@ def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, n
             cov_p = roster_df[roster_df['Nombre'] == coverer_name]
             if not cov_p.empty: blocked_turns.add(cov_p.iloc[0]['Turno'])
             
+    # Chequeo si es día de Transición Nocturna
+    transition_dates = get_night_transition_dates(night_periods)
+    current_date = datetime.date(year, 1, 1) + datetime.timedelta(days=day_idx)
+    is_transition_day = (current_date in transition_dates)
+
     turn_exhausted_from_night = None
     if day_idx > 0:
         prev_day_idx = day_idx - 1
@@ -533,15 +534,20 @@ def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, n
                     
     for _, candidate in roster_df.iterrows():
         cand_name = candidate['Nombre']
+        cand_turn = candidate['Turno']
         
-        if candidate['Turno'] == missing_turn: continue
+        # FILTRO SUPREMO: Si falta C en Noche, SOLO B puede cubrir
+        if is_transition_day and missing_turn == 'C':
+            if cand_turn != 'B': continue
+        
+        if cand_turn == missing_turn: continue
         if cand_name in unavailable_map[day_idx]: continue
         
         cand_status = current_schedule[cand_name][day_idx]
         if cand_status != 'L': continue 
         
-        if candidate['Turno'] in blocked_turns: continue
-        if turn_exhausted_from_night and candidate['Turno'] == turn_exhausted_from_night: continue
+        if cand_turn in blocked_turns: continue
+        if turn_exhausted_from_night and cand_turn == turn_exhausted_from_night: continue
         
         is_compatible = False
         cand_role = candidate['Rol']
@@ -602,6 +608,8 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
             if candidates:
                 valid = []
                 for c in candidates:
+                    # En cobertura forzosa nocturna (B cubre C), relajamos regla descanso si es necesario
+                    # Pero intentamos mantenerla por defecto
                     prev = final_schedule[c][d-1] if d > 0 else 'L'
                     prev2 = final_schedule[c][d-2] if d > 1 else 'L'
                     worked_prev = prev.startswith('T')
@@ -820,7 +828,7 @@ with st.sidebar:
 
     st.markdown("---")
     if st.button("🎲 Rellenar Automático (Estricto)", type="primary"):
-        with st.spinner("Optimizando cuadrante (Exhaustivo para Jefe C)..."):
+        with st.spinner("Optimizando cuadrante (C-Night + B-Cover)..."):
             new_reqs = auto_generate_schedule(st.session_state.roster_data, year_val, st.session_state.nights, strategy_key, current_requests)
             if new_reqs:
                 df_new = pd.DataFrame(new_reqs)
