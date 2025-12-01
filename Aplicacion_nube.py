@@ -638,7 +638,7 @@ with st.sidebar:
     st.markdown("---")
     if st.button("🎲 Rellenar Automático", type="primary"):
         with st.spinner("Optimizando cuadrante (Fase 1, 2 y 3)..."):
-            new_reqs = auto_generate_schedule(st.session_state.roster_data, year_val, st.session_state.nights, strategy_key, current_reqs)
+            new_reqs = auto_generate_schedule(st.session_state.roster_data, year_val, st.session_state.nights, strategy_key, current_requests)
             if new_reqs:
                 df_new = pd.DataFrame(new_reqs)
                 st.session_state.raw_requests_df = pd.concat([st.session_state.raw_requests_df, df_new], ignore_index=True)
