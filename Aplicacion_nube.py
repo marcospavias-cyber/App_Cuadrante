@@ -16,7 +16,7 @@ from operator import itemgetter
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V64.0 - Smart Coverage", page_icon="🚒")
+st.set_page_config(layout="wide", page_title="Gestor V66.0 - Blindaje Turno A", page_icon="🚒")
 
 # --- ESTILOS VISUALES ---
 st.markdown("""
@@ -28,8 +28,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V64.0 (Smart Night/Day Distinction)</h5>", unsafe_allow_html=True)
-st.title("🚒 Gestor de Cuadrantes: Versión Definitiva")
+st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V66.0 (Regla Anti-Doblete Turno A)</h5>", unsafe_allow_html=True)
+st.title("🚒 Gestor de Cuadrantes: Cobertura Segura")
 
 TEAMS = ['A', 'B', 'C']
 MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
@@ -182,7 +182,7 @@ def analyze_slot(start_idx, duration, person, occupation_map_T, base_sch, year, 
         d_obj = datetime.date(year, 1, 1) + timedelta(days=i)
         if d_obj in transition_dates:
             if base_sch[person['Turno']][i] == 'T': 
-                # Si es C, permitimos. Si es A/B, bloqueamos.
+                # Si es C, permitimos (porque B le cubrirá). Si es A/B, bloqueamos.
                 if person['Turno'] != 'C':
                     return False, "Conflicto Nocturna (Solo Turno C permitido)", "Nocturna"
         
@@ -445,7 +445,7 @@ def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=
     html += "</div>"
     return html
 
-# --- BUSCADOR DE CANDIDATOS (INTELIGENTE CON FALLBACK PARA EL A) ---
+# --- BUSCADOR DE CANDIDATOS (INTELIGENTE) ---
 def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, night_periods, unavailable_map, adjustments_log_current_day=None):
     candidates = []
     missing_role = person_missing['Rol']
@@ -457,7 +457,7 @@ def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, n
             cov_p = roster_df[roster_df['Nombre'] == coverer_name]
             if not cov_p.empty: blocked_turns.add(cov_p.iloc[0]['Turno'])
             
-    # Chequeo si es día de Transición Nocturna (C-NIGHT)
+    # Chequeo si es Noche
     is_in_night = is_in_night_period(day_idx, year, night_periods)
 
     turn_exhausted_from_night = None
@@ -473,13 +473,10 @@ def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, n
         cand_name = candidate['Nombre']
         cand_turn = candidate['Turno']
         
-        # --- REGLA: A NO CUBRE NOCHES DE C (Excepto si es normal) ---
-        # El usuario dijo: "3º el A no puede cubrir las noches del C"
-        # Pero tambien dijo: "pero el A si puede cubrir el resto del año"
-        # Por tanto, BLOQUEAMOS A solo si es NOCHE Y ES TURNO C.
+        # --- REGLA: A NO CUBRE NOCHES DE C (EVITAR DOBLETE) ---
         if is_in_night and missing_turn == 'C' and cand_turn == 'A':
             continue 
-        # ------------------------------------------------------------
+        # ------------------------------------------------------
         
         if cand_turn == missing_turn: continue
         if cand_name in unavailable_map[day_idx]: continue
@@ -553,13 +550,14 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
                 for c in candidates:
                     prev = final_schedule[c][d-1] if d > 0 else 'L'
                     next_day = final_schedule[c][d+1] if d < total_days-1 else 'L'
-                    # Permitir doblar si es Noche C (Esfuerzo extra de B permitido, ya que A esta bloqueado)
-                    if is_night and name_to_turn[name_missing] == 'C': valid.append(c)
+                    
+                    # SI ES NOCHE C, SE PERMITE DOBLAR (Para que B pueda cubrir)
+                    if is_night and name_to_turn[name_missing] == 'C':
+                         valid.append(c)
                     else:
                         if not (str(prev).startswith('T') or str(next_day).startswith('T')): valid.append(c)
                         
                 if valid:
-                    # En noches C, B es la unica opcion (A bloqueado en get_candidates)
                     valid.sort(key=lambda x: (
                         turn_coverage_counters[name_to_turn[x]], 
                         person_coverage_counters[x], 
@@ -573,7 +571,7 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
                     turn_coverage_counters[name_to_turn[chosen]] += 1
                     person_coverage_counters[chosen] += 1
             else:
-                if is_night and name_to_turn[name_missing] == 'C': final_schedule[name_missing][d] = "V(⚠)"
+                final_schedule[name_missing][d] = "V(⚠)"
 
     # Relleno
     fill_log = {}
@@ -625,7 +623,12 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
                     if d <= d_month:
                         dt = datetime.date(year, m_idx+1, d); d_y = dt.timetuple().tm_yday - 1
                         st_val = schedule[nm][d_y]
-                        fill = s_L; val = ""
+                        
+                        # LOGICA COLORES: Alerta primero
+                        fill = s_L
+                        if is_in_night_period(d_y, year, night_periods): fill = s_Night
+                        
+                        val = ""
                         if st_val == 'T': fill = s_T; val = "T"
                         elif st_val == 'V': fill = s_V; val = "V"
                         elif st_val == 'V(L)': fill = s_VL; val = "V"
@@ -637,8 +640,8 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
                             val = get_short_id(cov_p['Nombre'], cov_p['Rol'], cov_p['Turno'])
                         elif st_val == 'T+': fill = s_Extra; val = "T+"
                         elif st_val == 'L*': fill = s_Free; val = "L"
-                        elif st_val == 'V(⚠)': fill = s_Alert; val = "⚠" 
-                        if is_in_night_period(d_y, year, night_periods): fill = s_Night
+                        elif st_val == 'V(⚠)': fill = s_Alert; val = "⚠" # Gana al gris
+                        
                         cell.fill = fill; cell.value = val
                     else: cell.fill = PatternFill("solid", fgColor="808080")
                 curr_row += 1
