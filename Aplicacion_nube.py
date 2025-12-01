@@ -16,7 +16,7 @@ from operator import itemgetter
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V63.0 - Strict Night Block", page_icon="🚒")
+st.set_page_config(layout="wide", page_title="Gestor V64.0 - Smart Coverage", page_icon="🚒")
 
 # --- ESTILOS VISUALES ---
 st.markdown("""
@@ -28,7 +28,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V63.0 (A-Block on C-Nights)</h5>", unsafe_allow_html=True)
+st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V64.0 (Smart Night/Day Distinction)</h5>", unsafe_allow_html=True)
 st.title("🚒 Gestor de Cuadrantes: Versión Definitiva")
 
 TEAMS = ['A', 'B', 'C']
@@ -178,10 +178,11 @@ def analyze_slot(start_idx, duration, person, occupation_map_T, base_sch, year, 
         if len(daily_absent[i]) >= 2:
             return False, f"Cupo lleno (2 pers) el día {i+1}", "Sistema"
 
-        # 2. Noche (Transición) - Permite al C
+        # 2. Noche (Transición)
         d_obj = datetime.date(year, 1, 1) + timedelta(days=i)
         if d_obj in transition_dates:
             if base_sch[person['Turno']][i] == 'T': 
+                # Si es C, permitimos. Si es A/B, bloqueamos.
                 if person['Turno'] != 'C':
                     return False, "Conflicto Nocturna (Solo Turno C permitido)", "Nocturna"
         
@@ -250,7 +251,7 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
     # RONDAS
     random.shuffle(people)
     
-    # RONDA 1 (Bloques Grandes)
+    # RONDA 1
     for person in people:
         cred, nat, my_slots = get_person_stats(person['Nombre'], person['Turno'], generated_requests)
         current_recipe = RECIPE.copy(); current_recipe.sort(key=lambda x: x['dur'], reverse=True)
@@ -289,7 +290,7 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
                     })
                     cred += targ; nat += dur; my_slots.append((start, dur))
 
-    # RONDA 2 (Créditos)
+    # RONDA 2
     people.sort(key=lambda x: get_person_stats(x['Nombre'], x['Turno'], generated_requests)[0])
     rescue = [{"dur": 4, "target": 1}, {"dur": 3, "target": 1}, {"dur": 1, "target": 1}]
     for person in people:
@@ -327,7 +328,7 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
                                  cred += targ; nat += dur; my_slots.append((d, dur)); found = True; break 
                 if not found: break
 
-    # RONDA 3 (Naturales)
+    # RONDA 3
     people.sort(key=lambda x: get_person_stats(x['Nombre'], x['Turno'], generated_requests)[1])
     for person in people:
         cred, nat, my_slots = get_person_stats(person['Nombre'], person['Turno'], generated_requests)
@@ -444,7 +445,7 @@ def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=
     html += "</div>"
     return html
 
-# --- BUSCADOR DE CANDIDATOS (REGLA ESTRICTA C-NOCHE-B) ---
+# --- BUSCADOR DE CANDIDATOS (INTELIGENTE CON FALLBACK PARA EL A) ---
 def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, night_periods, unavailable_map, adjustments_log_current_day=None):
     candidates = []
     missing_role = person_missing['Rol']
@@ -456,6 +457,7 @@ def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, n
             cov_p = roster_df[roster_df['Nombre'] == coverer_name]
             if not cov_p.empty: blocked_turns.add(cov_p.iloc[0]['Turno'])
             
+    # Chequeo si es día de Transición Nocturna (C-NIGHT)
     is_in_night = is_in_night_period(day_idx, year, night_periods)
 
     turn_exhausted_from_night = None
@@ -471,10 +473,13 @@ def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, n
         cand_name = candidate['Nombre']
         cand_turn = candidate['Turno']
         
-        # --- REGLA BLOQUEO A EN NOCHES C ---
-        if is_in_night and missing_turn == 'C':
-            if cand_turn == 'A': continue # BLOQUEADO
-        # ------------------------------------
+        # --- REGLA: A NO CUBRE NOCHES DE C (Excepto si es normal) ---
+        # El usuario dijo: "3º el A no puede cubrir las noches del C"
+        # Pero tambien dijo: "pero el A si puede cubrir el resto del año"
+        # Por tanto, BLOQUEAMOS A solo si es NOCHE Y ES TURNO C.
+        if is_in_night and missing_turn == 'C' and cand_turn == 'A':
+            continue 
+        # ------------------------------------------------------------
         
         if cand_turn == missing_turn: continue
         if cand_name in unavailable_map[day_idx]: continue
@@ -533,7 +538,7 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
         current_day_coverers = []
         is_night = is_in_night_period(d, year, night_periods)
         
-        # Prioridad C Noche
+        # Prioridad Noche
         absent_people.sort(key=lambda x: (0 if "C" in name_to_turn[x] and is_night else 1, 0 if "Jefe" in x else 1))
 
         for name_missing in absent_people:
@@ -548,16 +553,14 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
                 for c in candidates:
                     prev = final_schedule[c][d-1] if d > 0 else 'L'
                     next_day = final_schedule[c][d+1] if d < total_days-1 else 'L'
-                    # Permitir doblar si es Noche C (Esfuerzo extra de B permitido)
+                    # Permitir doblar si es Noche C (Esfuerzo extra de B permitido, ya que A esta bloqueado)
                     if is_night and name_to_turn[name_missing] == 'C': valid.append(c)
                     else:
                         if not (str(prev).startswith('T') or str(next_day).startswith('T')): valid.append(c)
                         
                 if valid:
-                    # SI ES C-NOCHE, EL B VA PRIMERO
-                    is_c_night = (is_night and name_to_turn[name_missing] == 'C')
+                    # En noches C, B es la unica opcion (A bloqueado en get_candidates)
                     valid.sort(key=lambda x: (
-                        0 if (is_c_night and name_to_turn[x] == 'B') else 1, 
                         turn_coverage_counters[name_to_turn[x]], 
                         person_coverage_counters[x], 
                         random.random()
