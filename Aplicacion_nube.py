@@ -24,12 +24,12 @@ st.markdown("""
     .stApp { background-color: #f8f9fa; }
     h1 { color: #d32f2f; }
     div[data-testid="stMetricValue"] { font-size: 1.4rem; font-weight: bold; }
+    .stButton>button { width: 100%; border-radius: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- CRÉDITOS ---
 st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V52.0</h5>", unsafe_allow_html=True)
-st.title("🚒 Gestor de Cuadrantes Inteligente")
+st.title("🚒 Gestor de Cuadrantes: Versión Completa")
 
 TEAMS = ['A', 'B', 'C']
 MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
@@ -92,7 +92,6 @@ DEFAULT_ROSTER = [
 # ==============================================================================
 
 def get_short_id(name, role, turn):
-    """Genera un ID corto para visualizar en celdas pequeñas (ej: JB, C1, B2)."""
     if role == "Jefe": return f"J{turn}"
     if role == "Subjefe": return f"S{turn}"
     if role == "Conductor": return f"C{turn}"
@@ -100,13 +99,11 @@ def get_short_id(name, role, turn):
         parts = name.split()
         if len(parts) > 1:
             suffix = parts[-1]
-            if len(suffix) >= 2:
-                return f"B{suffix[-1]}{turn}"
+            if len(suffix) >= 2: return f"B{suffix[-1]}{turn}"
     return f"{name[:3]}{turn}"
 
 @st.cache_data
 def generate_base_schedule(year):
-    """Genera el patrón A-B-C para todo el año."""
     is_leap = calendar.isleap(year)
     total_days = 366 if is_leap else 365
     status = {'A': 0, 'B': 2, 'C': 1} 
@@ -118,7 +115,6 @@ def generate_base_schedule(year):
     return schedule, total_days
 
 def is_in_night_period(day_idx, year, night_periods):
-    """Verifica si un día cae dentro de un periodo de nocturnidad."""
     current_date = datetime.date(year, 1, 1) + datetime.timedelta(days=day_idx)
     for start, end in night_periods:
         if start <= current_date <= end: return True
@@ -126,14 +122,12 @@ def is_in_night_period(day_idx, year, night_periods):
 
 @st.cache_data
 def get_night_transition_dates(night_periods):
-    """Obtiene fechas críticas de cambio de nocturnidad."""
     dates = set()
     for start, end in night_periods:
         dates.add(end) 
     return dates
 
 def calculate_stats(roster_df, requests, year):
-    """Calcula estadísticas en tiempo real (Créditos y Días Naturales)."""
     base_sch, _ = generate_base_schedule(year)
     stats = {}
     for _, p in roster_df.iterrows():
@@ -153,42 +147,33 @@ def calculate_stats(roster_df, requests, year):
     return stats
 
 def book_slot_gen(start_idx, duration, person, occupation_map):
-    """Marca un slot como ocupado en el mapa temporal."""
     for i in range(start_idx, start_idx + duration):
         if i not in occupation_map: occupation_map[i] = []
         occupation_map[i].append(person)
 
-# --- DETECTOR DE CONFLICTOS CENTRALIZADO ---
+# --- DETECTOR DE CONFLICTOS ---
 def analyze_slot(start_idx, duration, person, occupation_map_T, base_sch, year, transition_dates, daily_absent, daily_roles):
-    """
-    Analiza si un bombero puede irse de vacaciones en un rango dado.
-    Reglas: Cupo global (2), Coincidencia Categoría, Coincidencia Turno, Nocturnas.
-    """
     total_days = len(base_sch['A'])
     if start_idx + duration > total_days: return False, "Fuera de año", None
     
     my_start_natural = start_idx
     my_end_natural = start_idx + duration - 1
 
-    # 1. Reglas Diarias
     for i in range(start_idx, start_idx + duration):
-        # REGLA SAGRADA: Máximo 2 personas ausentes en toda la plantilla
+        # REGLA SAGRADA: Cupo >= 2
         if len(daily_absent[i]) >= 2:
             return False, f"Cupo lleno (2 pers) el día {i+1}", "Sistema"
 
-        # Regla Nocturna (Transición)
         d_obj = datetime.date(year, 1, 1) + timedelta(days=i)
         if d_obj in transition_dates:
             if base_sch[person['Turno']][i] == 'T': 
                 return False, "Conflicto Nocturna (Día Transición)", "Nocturna"
         
-        # Regla: No coincidir con alguien de tu mismo turno
         occupants_T = occupation_map_T.get(i, [])
         for occ in occupants_T:
             if occ['Turno'] == person['Turno']: 
                 return False, f"Coincide turno T con {occ['Nombre']}", occ['Nombre']
     
-    # 2. Regla Categoría (excepto Bomberos)
     if person['Rol'] != 'Bombero':
         for d_check in range(my_start_natural, my_end_natural + 1):
             people_today = daily_absent[d_check]
@@ -199,16 +184,14 @@ def analyze_slot(start_idx, duration, person, occupation_map_T, base_sch, year, 
                         
     return True, "OK", None
 
-
 # ==============================================================================
-# 3. ALGORITMO GENERADOR (VERSION INTELIGENTE - 3 FASES)
+# 3. ALGORITMO GENERADOR (3 FASES - ANTI INANICIÓN)
 # ==============================================================================
 
 def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current_reqs):
     base_sch, total_days = generate_base_schedule(year)
     transition_dates = get_night_transition_dates(night_periods)
     
-    # --- Construir Mapas de Ocupación Iniciales ---
     occupation_map_T = {i:[] for i in range(total_days)}
     daily_absent = {i: [] for i in range(total_days)}
     daily_roles = {i: [] for i in range(total_days)}
@@ -230,9 +213,9 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
     people = roster_df.to_dict('records')
     priority_order = ["Jefe", "Subjefe", "Conductor", "Bombero"]
     
-    # --- PASO CRÍTICO: Barajar aleatoriamente para justicia social ---
+    # --- ALEATORIEDAD CRÍTICA PARA BOMBERO C3 ---
     random.shuffle(people)
-    people.sort(key=lambda x: priority_order.index(x['Rol'])) # Respetar jerarquía pero con orden interno aleatorio
+    people.sort(key=lambda x: priority_order.index(x['Rol'])) 
     
     RECIPE = STRATEGIES[strategy_key]['auto_recipe']
     
@@ -241,7 +224,6 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
         credits_got = 0
         natural_days_got = 0
         
-        # Calcular estado actual del bombero
         my_existing = [r for r in current_reqs if r['Nombre'] == person['Nombre']]
         for r in my_existing:
             s = r['Inicio'].timetuple().tm_yday - 1
@@ -253,9 +235,7 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
                 if 0 <= k < total_days and base_sch[person['Turno']][k] == 'T':
                     credits_got += 1
         
-        # ======================================================
-        # FASE 1: BLOQUES PRINCIPALES (Ideal)
-        # ======================================================
+        # FASE 1: BLOQUES GRANDES
         current_recipe = RECIPE.copy()
         current_recipe.sort(key=lambda x: x['dur'], reverse=True)
         
@@ -266,10 +246,8 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
             
             valid_starts = []
             for d in range(0, total_days - duration):
-                # REGLA SAGRADA: Cupo >= 2 bloquea
                 if len(daily_absent[d]) >= 2: continue
                 
-                # Verificar que todo el bloque cabe
                 block_broken = False
                 for k in range(d, d+duration):
                     if len(daily_absent[k]) >= 2: block_broken = True; break
@@ -301,14 +279,9 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
                         "Fin": datetime.date(year, 1, 1) + timedelta(days=start+duration-1)
                     })
 
-        # ======================================================
-        # FASE 2: RESCATE (Asegurar los 13 Créditos)
-        # ======================================================
-        # Si falló la fase 1 por cupo lleno, buscamos huecos pequeños
+        # FASE 2: RESCATE (FRAGMENTACIÓN)
         rescue_blocks = [{"dur": 4, "target": 1}, {"dur": 3, "target": 1}, {"dur": 1, "target": 1}]
-        
         for r_block in rescue_blocks:
-            # Intentos repetidos para llenar los créditos que falten
             for _ in range(15): 
                 if credits_got >= 13: break
                 duration = r_block['dur']
@@ -348,10 +321,7 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
                             "Fin": datetime.date(year, 1, 1) + timedelta(days=start+duration-1)
                         })
 
-        # ======================================================
-        # FASE 3: RELLENO DE NATURALES (Hasta 39 días)
-        # ======================================================
-        # Si tiene los créditos pero le faltan días para disfrutar
+        # FASE 3: RELLENO NATURALES
         needed_natural = 39 - natural_days_got
         if needed_natural > 0:
             potential_days = list(range(total_days))
@@ -359,17 +329,13 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
             
             for d in potential_days:
                 if needed_natural <= 0: break
-                
-                # 1. Regla Sagrada: Cupo
                 if len(daily_absent[d]) >= 2: continue
                 
-                # 2. Evitar solapamiento propio
                 overlap = False
                 for ms in my_slots:
                     if not (d < ms[0] or d > ms[0] + ms[1] - 1): overlap = True; break
                 if overlap: continue
 
-                # 3. Solo días libres si ya cumplió créditos, o días T si aun le faltan (caso raro)
                 is_working_day = (base_sch[person['Turno']][d] == 'T')
                 if credits_got >= 13 and is_working_day: continue
                 
@@ -385,7 +351,6 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
                     my_slots.append((d, 1))
                     natural_days_got += 1
                     needed_natural -= 1
-                    
                     generated_requests.append({
                         "Nombre": person['Nombre'],
                         "Inicio": datetime.date(year, 1, 1) + timedelta(days=d),
@@ -395,12 +360,11 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
     return generated_requests
 
 # ==============================================================================
-# 4. RENDERIZADO VISUAL Y EXCEL
+# 4. RENDER Y EXCEL
 # ==============================================================================
 
 @st.cache_data
 def render_global_occupation_calendar(year, roster_df, requests, night_periods):
-    """Renderiza el mapa de calor HTML de ocupación."""
     base_sch, total_days = generate_base_schedule(year)
     transition_dates = get_night_transition_dates(night_periods)
     occ_map = {d: [] for d in range(total_days)}
@@ -441,7 +405,7 @@ def render_global_occupation_calendar(year, roster_df, requests, night_periods):
                 
                 if count == 0: bg = "#d4edda"; txt_col = "#155724"
                 elif count == 1: bg = "#FFF3CD"; txt_col = "#856404"
-                else: bg = "#F8D7DA"; txt_col = "#721c24" # Rojo si >= 2
+                else: bg = "#F8D7DA"; txt_col = "#721c24" 
 
                 border = "1px solid #fff"
                 if dt in transition_dates: border = "2px solid red"
@@ -454,7 +418,6 @@ def render_global_occupation_calendar(year, roster_df, requests, night_periods):
     return html
 
 def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=None):
-    """Renderiza el calendario individual de un bombero."""
     html = f"<div style='font-family:monospace; font-size:10px;'>"
     html += """
     <div style='display:flex; gap:10px; margin-bottom:5px; font-size:11px; font-weight:bold;'>
@@ -489,7 +452,6 @@ def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=
                     bg_color = "#FFC000"; text_color = "#000"
                 
                 if dt in get_night_transition_dates(night_periods): border = "2px solid red"
-                
                 html += f"<div style='width:20px; background-color:{bg_color}; color:{text_color}; text-align:center; border:{border}; border-radius:2px;'>{state[0]}</div>"
             else:
                 html += "<div style='width:20px;'></div>"
@@ -498,7 +460,6 @@ def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=
     return html
 
 def validate_and_generate_final(roster_df, requests, year, night_periods, strategy_key="standard"):
-    """Calcula el cuadrante final y asigna coberturas automáticas."""
     base_schedule_turn, total_days = generate_base_schedule(year)
     final_schedule = {} 
     
@@ -508,12 +469,10 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
     day_vacations = {i: [] for i in range(total_days)}
     unavailable_map = {i: set() for i in range(total_days)}
 
-    # Marcar Vacaciones
     for req in requests:
         name = req['Nombre']
         s_idx = req['Inicio'].timetuple().tm_yday - 1
         e_idx = req['Fin'].timetuple().tm_yday - 1
-        
         for d in range(s_idx, e_idx + 1):
             unavailable_map[d].add(name)
             if final_schedule[name][d] == 'T':
@@ -525,7 +484,6 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
     adjustments_log = []
     coverage_counts = {name: 0 for name in roster_df['Nombre']}
     
-    # Asignar Coberturas
     for d in range(total_days):
         absent_people = day_vacations[d]
         if not absent_people: continue
@@ -533,21 +491,16 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
         potential_coverers = []
         for _, candidate in roster_df.iterrows():
             c_name = candidate['Nombre']
-            # Debe estar libre y no ocupado
             if final_schedule[c_name][d] == 'L' and c_name not in unavailable_map[d]:
-                # Verificar descanso (no doblar)
                 prev_day = final_schedule[c_name][d-1] if d > 0 else 'L'
                 next_day = final_schedule[c_name][d+1] if d < total_days-1 else 'L'
                 if str(prev_day).startswith('T') or str(next_day).startswith('T'): continue
-                
                 potential_coverers.append(c_name)
         
-        # Aleatoriedad y Justicia en la cobertura
         random.shuffle(potential_coverers)
         potential_coverers.sort(key=lambda x: coverage_counts[x])
         
         for missing in absent_people:
-            # Filtro básico de rol
             role_missing = roster_df[roster_df['Nombre']==missing].iloc[0]['Rol']
             found = None
             for cand in potential_coverers:
@@ -571,48 +524,34 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
     return final_schedule, adjustments_log, coverage_counts
 
 def create_final_excel(schedule, roster_df, year, requests, adjustments_log):
-    """Genera el archivo Excel descargable."""
     wb = Workbook()
-    
-    # Estilos Excel
-    s_T = PatternFill("solid", fgColor="C6EFCE")
-    s_V = PatternFill("solid", fgColor="FFC000")
+    s_T = PatternFill("solid", fgColor="C6EFCE"); s_V = PatternFill("solid", fgColor="FFC000")
     s_Cov = PatternFill("solid", fgColor="FFC7CE")
-    
-    font_bold = Font(bold=True)
-    align_c = Alignment(horizontal="center", vertical="center")
-    border_all = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
+    font_bold = Font(bold=True); border_all = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
 
-    # HOJA 1
     ws1 = wb.active; ws1.title = "Cuadrante"
     curr_row = 1
     for t in TEAMS:
         ws1.cell(curr_row, 1, f"TURNO {t}").font = Font(bold=True, color="FFFFFF"); 
         ws1.cell(curr_row, 1).fill = PatternFill("solid", fgColor="000080")
         curr_row += 1
-        
         members = roster_df[roster_df['Turno'] == t]
         for _, p in members.iterrows():
             nm = p['Nombre']
             ws1.cell(curr_row, 1, f"{nm} ({p['Rol']})").font = font_bold
-            
             for m_idx, mes in enumerate(MESES):
                 days_in_month = calendar.monthrange(year, m_idx+1)[1]
                 for d in range(1, days_in_month + 1):
-                    dt = datetime.date(year, m_idx+1, d)
-                    d_idx = dt.timetuple().tm_yday - 1
+                    dt = datetime.date(year, m_idx+1, d); d_idx = dt.timetuple().tm_yday - 1
                     col_idx = 2 + d_idx 
                     val = schedule[nm][d_idx]
-                    cell = ws1.cell(curr_row, col_idx)
-                    cell.border = border_all
-                    
+                    cell = ws1.cell(curr_row, col_idx); cell.border = border_all
                     if val == 'T': cell.fill = s_T; cell.value = "T"
                     elif val == 'V': cell.fill = s_V; cell.value = "V"
                     elif str(val).startswith('T*'): cell.fill = s_Cov; cell.value = "T*"
             curr_row += 1
         curr_row += 1
 
-    # HOJA 2 ESTADISTICAS
     ws2 = wb.create_sheet("Estadísticas")
     ws2.append(["Nombre", "Rol", "Total Guardias Trabajadas", "Total Vacaciones (Naturales)"])
     for _, p in roster_df.iterrows():
@@ -620,15 +559,14 @@ def create_final_excel(schedule, roster_df, year, requests, adjustments_log):
         worked = sum([1 for d in schedule[nm] if str(d).startswith('T')])
         nat_days = 0
         for r in requests:
-            if r['Nombre'] == nm:
-                nat_days += (r['Fin'] - r['Inicio']).days + 1
+            if r['Nombre'] == nm: nat_days += (r['Fin'] - r['Inicio']).days + 1
         ws2.append([nm, p['Rol'], worked, nat_days])
 
     out = io.BytesIO(); wb.save(out); out.seek(0)
     return out
 
 # ==============================================================================
-# 5. UI STREAMLIT
+# 5. UI STREAMLIT (CON BACKUPS Y NOCTURNAS)
 # ==============================================================================
 
 if 'raw_requests_df' not in st.session_state:
@@ -644,13 +582,61 @@ with st.sidebar:
     st.header("Panel de Control")
     strategy_key = st.selectbox("🎯 Estrategia", list(STRATEGIES.keys()), format_func=lambda x: STRATEGIES[x]['name'])
     
+    # --- RESTAURADO: NOCTURNAS ---
+    with st.expander("🌑 Gestión Nocturnas"):
+        c1, c2 = st.columns(2)
+        d_start = c1.date_input("Inicio", value=None)
+        d_end = c2.date_input("Fin", value=None)
+        if st.button("Añadir Periodo"):
+            if d_start and d_end:
+                st.session_state.nights.append((d_start, d_end))
+                st.success("Añadido")
+        st.write(f"Periodos activos: {len(st.session_state.nights)}")
+        if st.button("Limpiar Nocturnas"): st.session_state.nights = []
+        
+        # Subida Excel Nocturnas
+        up_n = st.file_uploader("Subir Excel Nocturnas", type=['xlsx'], key="night_up")
+        if up_n:
+            try:
+                df_n = pd.read_excel(up_n)
+                loaded_c = 0
+                for _, row in df_n.iterrows():
+                    if not pd.isnull(row.iloc[0]) and not pd.isnull(row.iloc[1]):
+                        d1 = pd.to_datetime(row.iloc[0]).date()
+                        d2 = pd.to_datetime(row.iloc[1]).date()
+                        st.session_state.nights.append((d1, d2))
+                        loaded_c += 1
+                st.success(f"Cargados {loaded_c} periodos")
+            except Exception as e: st.error(f"Error: {e}")
+
+    # --- RESTAURADO: BACKUP Y CSV ---
     st.markdown("---")
-    if st.button("🗑️ Borrar Todo"):
+    st.subheader("💾 Datos y Backup")
+    if not st.session_state.raw_requests_df.empty:
+        csv_data = st.session_state.raw_requests_df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Descargar Backup (.csv)", csv_data, "backup_vacaciones.csv", "text/csv")
+    
+    up_csv = st.file_uploader("📤 Restaurar Backup (.csv)", type=["csv"], key="csv_up")
+    if up_csv:
+        try:
+            df_up = pd.read_csv(up_csv)
+            if {"Nombre", "Inicio", "Fin"}.issubset(df_up.columns):
+                df_up['Inicio'] = pd.to_datetime(df_up['Inicio']).dt.date
+                df_up['Fin'] = pd.to_datetime(df_up['Fin']).dt.date
+                if st.button("Aplicar CSV Cargado"):
+                    st.session_state.raw_requests_df = df_up
+                    st.rerun()
+            else: st.error("CSV inválido")
+        except Exception as e: st.error(f"Error: {e}")
+
+    # --- ACCIONES PRINCIPALES ---
+    st.markdown("---")
+    if st.button("🗑️ Resetear Todo", type="secondary"):
         st.session_state.raw_requests_df = pd.DataFrame(columns=["Nombre", "Inicio", "Fin"])
         st.rerun()
 
     st.markdown("---")
-    if st.button("🎲 Rellenar Automático"):
+    if st.button("🎲 Rellenar Automático", type="primary"):
         with st.spinner("Optimizando cuadrante (Fase 1, 2 y 3)..."):
             new_reqs = auto_generate_schedule(st.session_state.roster_data, year_val, st.session_state.nights, strategy_key, current_reqs)
             if new_reqs:
@@ -661,32 +647,27 @@ with st.sidebar:
             else:
                 st.warning("No se encontraron más huecos disponibles.")
 
-# MAIN LAYOUT
+# MAIN UI
 st.subheader("🌍 Mapa de Calor (Ocupación Global)")
 st.caption("Verde: Libre | Rojo: Cupo lleno (2 personas)")
 st.markdown(render_global_occupation_calendar(year_val, st.session_state.roster_data, current_requests, st.session_state.nights), unsafe_allow_html=True)
 
 col_1, col_2 = st.columns([1, 2])
-
 with col_1:
     st.subheader("Selección Manual")
     sel_person = st.selectbox("Bombero:", st.session_state.roster_data['Nombre'])
     if sel_person:
         curr_s = stats[sel_person]
-        st.metric("Créditos (Guardias)", f"{curr_s['credits']} / 13", delta=13-curr_s['credits'])
+        st.metric("Créditos", f"{curr_s['credits']} / 13", delta=13-curr_s['credits'])
         st.metric("Naturales", f"{curr_s['natural']} / 39", delta=39-curr_s['natural'])
-        
         d_range = st.date_input("Elegir fechas", [])
         if len(d_range) == 2:
-            if st.button("Añadir Vacaciones"):
+            if st.button("Añadir"):
                 new_row = {"Nombre": sel_person, "Inicio": d_range[0], "Fin": d_range[1]}
                 st.session_state.raw_requests_df = pd.concat([st.session_state.raw_requests_df, pd.DataFrame([new_row])], ignore_index=True)
                 st.rerun()
-        
         my_reqs = st.session_state.raw_requests_df[st.session_state.raw_requests_df['Nombre'] == sel_person]
-        if not my_reqs.empty:
-            st.write("Periodos asignados:")
-            st.dataframe(my_reqs)
+        if not my_reqs.empty: st.dataframe(my_reqs)
 
 with col_2:
     if sel_person:
@@ -694,15 +675,11 @@ with col_2:
         p_data = st.session_state.roster_data[st.session_state.roster_data['Nombre']==sel_person].iloc[0]
         base_sch, _ = generate_base_schedule(year_val)
         preview_sch = base_sch[p_data['Turno']].copy()
-        
-        # Pinta vacaciones actuales
         for r in current_requests:
             if r['Nombre'] == sel_person:
                 s = r['Inicio'].timetuple().tm_yday - 1
                 e = r['Fin'].timetuple().tm_yday - 1
-                for k in range(s, e+1):
-                    preview_sch[k] = 'V'
-        
+                for k in range(s, e+1): preview_sch[k] = 'V'
         st.markdown(render_annual_calendar(year_val, p_data['Turno'], base_sch, st.session_state.nights, preview_sch), unsafe_allow_html=True)
 
 st.divider()
