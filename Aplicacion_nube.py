@@ -16,7 +16,7 @@ from operator import itemgetter
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V54.0 - Original Excel", page_icon="🚒")
+st.set_page_config(layout="wide", page_title="Gestor V54.1 - Final Stable", page_icon="🚒")
 
 # --- ESTILOS VISUALES ---
 st.markdown("""
@@ -28,7 +28,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V54.0 (Strict Balance)</h5>", unsafe_allow_html=True)
+st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V54.1 (Strict Balance & Fixes)</h5>", unsafe_allow_html=True)
 st.title("🚒 Gestor de Cuadrantes: Versión Definitiva")
 
 TEAMS = ['A', 'B', 'C']
@@ -199,7 +199,7 @@ def analyze_slot(start_idx, duration, person, occupation_map_T, base_sch, year, 
     return True, "OK", None
 
 # ==============================================================================
-# 3. ALGORITMO GENERADOR (VERSION ESTRICTA)
+# 3. ALGORITMO GENERADOR (VERSION ESTRICTA MULTI-PASS)
 # ==============================================================================
 
 def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current_reqs):
@@ -249,12 +249,11 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
     RECIPE = STRATEGIES[strategy_key]['auto_recipe']
     
     # ==============================================================================
-    # RONDA 1: ESTRATEGIA PRINCIPAL (PERO SIN PASARSE NI 1 CRÉDITO)
+    # RONDA 1: ESTRATEGIA PRINCIPAL (ESTRICTA)
     # ==============================================================================
     random.shuffle(people)
     
     for person in people:
-        # Calcular estado
         cred, nat, my_slots = get_person_stats(person['Nombre'], person['Turno'], generated_requests)
         
         current_recipe = RECIPE.copy()
@@ -264,9 +263,9 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
             duration = block['dur']
             target = block['target']
             
-            # --- CORRECCIÓN CRÍTICA: LÍMITE ESTRICTO ---
-            if cred + target > 13: continue # Si al sumar este bloque nos pasamos, NO LO PONEMOS
-            if nat + duration > 39: continue # Si nos pasamos de naturales, NO LO PONEMOS
+            # --- LÍMITE ESTRICTO ---
+            if cred + target > 13: continue 
+            if nat + duration > 39: continue 
             
             valid_starts = []
             for d in range(0, total_days - duration):
@@ -304,7 +303,7 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
                     my_slots.append((start, duration))
 
     # ==============================================================================
-    # RONDA 2: EQUILIBRADO DE CRÉDITOS (RESCATE)
+    # RONDA 2: EQUILIBRADO DE CRÉDITOS (RESCATE ESTRICTO)
     # ==============================================================================
     people.sort(key=lambda x: get_person_stats(x['Nombre'], x['Turno'], generated_requests)[0])
     rescue_blocks = [{"dur": 4, "target": 1}, {"dur": 3, "target": 1}, {"dur": 1, "target": 1}]
@@ -320,7 +319,6 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
                 duration = r_block['dur']
                 target = r_block['target']
                 
-                # --- LÍMITE ESTRICTO ---
                 if cred + target > 13: continue 
                 if nat + duration > 39: continue
                 
@@ -360,7 +358,7 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
                         my_slots.append((start, duration))
 
     # ==============================================================================
-    # RONDA 3: RELLENO FINAL (DÍAS NATURALES)
+    # RONDA 3: RELLENO FINAL (DÍAS NATURALES ESTRICTO)
     # ==============================================================================
     people.sort(key=lambda x: get_person_stats(x['Nombre'], x['Turno'], generated_requests)[1])
 
@@ -383,10 +381,7 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
 
                 is_working_day = (base_sch[person['Turno']][d] == 'T')
                 
-                # --- LÍMITE ESTRICTO ---
-                # Si es día de trabajo y ya tiene 13 créditos, NO PUEDE COGERLO.
                 if is_working_day and cred >= 13: continue
-                # Si cogiéndolo se pasaría de 13 créditos, NO PUEDE COGERLO.
                 if is_working_day and (cred + 1 > 13): continue
                 
                 is_valid, _, _ = analyze_slot(d, 1, person, occupation_map_T, base_sch, year, transition_dates, daily_absent, daily_roles)
@@ -411,8 +406,104 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
     return generated_requests
 
 # ==============================================================================
-# 4. EXCEL ORIGINAL (RESTAURADO)
+# 4. RENDER Y EXCEL (VISUALIZACIÓN RESTAURADA)
 # ==============================================================================
+
+@st.cache_data
+def render_global_occupation_calendar(year, roster_df, requests, night_periods):
+    base_sch, total_days = generate_base_schedule(year)
+    transition_dates = get_night_transition_dates(night_periods)
+    occ_map = {d: [] for d in range(total_days)}
+    
+    for req in requests:
+        name = req['Nombre']
+        if name not in roster_df['Nombre'].values: continue
+        person_row = roster_df[roster_df['Nombre'] == name].iloc[0]
+        turn = person_row['Turno']
+        s = req['Inicio'].timetuple().tm_yday - 1
+        e = req['Fin'].timetuple().tm_yday - 1
+        for d in range(s, e+1):
+            occ_map[d].append(get_short_id(name, person_row['Rol'], turn))
+
+    html = "<div style='font-family:monospace; font-size:9px; overflow-x: auto;'>"
+    html += """
+    <div style='display:flex; gap:10px; margin-bottom:10px; font-size:11px; font-weight:bold;'>
+        <span style='background:#d4edda; color:#155724; padding:2px 6px; border:1px solid #c3e6cb;'>🟩 DISPONIBLE</span>
+        <span style='background:#FFF3CD; color:#856404; padding:2px 6px; border:1px solid #FFEEBA;'>🟧 ÚLTIMA PLAZA</span>
+        <span style='background:#F8D7DA; color:#721c24; padding:2px 6px; border:1px solid #F5C6CB;'>🟥 COMPLETO (2/2)</span>
+    </div>
+    """
+    html += "<div style='display:flex; margin-bottom:2px;'><div style='width:35px;'></div>"
+    for d in range(1, 32):
+        html += f"<div style='width:32px; text-align:center; color:#888;'>{d}</div>"
+    html += "</div>"
+
+    for m_idx, mes in enumerate(MESES):
+        m_num = m_idx + 1
+        days_in_month = calendar.monthrange(year, m_num)[1]
+        html += f"<div style='display:flex; margin-bottom:2px;'><div style='width:35px; font-weight:bold; padding-top:8px;'>{mes}</div>"
+        for d in range(1, 32):
+            if d <= days_in_month:
+                dt = datetime.date(year, m_num, d)
+                d_idx = dt.timetuple().tm_yday - 1
+                occupants = occ_map[d_idx]
+                count = len(occupants)
+                
+                if count == 0: bg = "#d4edda"; txt_col = "#155724"
+                elif count == 1: bg = "#FFF3CD"; txt_col = "#856404"
+                else: bg = "#F8D7DA"; txt_col = "#721c24" 
+
+                border = "1px solid #fff"
+                if dt in transition_dates: border = "2px solid red"
+                label = "<br>".join(occupants)
+                html += f"<div style='width:32px; height:30px; background-color:{bg}; color:{txt_col}; text-align:center; border:{border}; border-radius:2px; font-size:8px; line-height:9px; display:flex; align-items:center; justify-content:center;'>{label}</div>"
+            else:
+                html += "<div style='width:32px;'></div>"
+        html += "</div>"
+    html += "</div>"
+    return html
+
+def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=None):
+    html = f"<div style='font-family:monospace; font-size:10px;'>"
+    html += """
+    <div style='display:flex; gap:10px; margin-bottom:5px; font-size:11px; font-weight:bold;'>
+        <span style='background:#d4edda; color:#155724; padding:2px 5px; border:1px solid #c3e6cb;'>T (Guardia)</span>
+        <span style='background:#FFC000; color:#000; padding:2px 5px; border:1px solid #DAA520;'>V (Vacaciones)</span>
+        <span style='background:#1E7E34; color:white; padding:2px 5px;'>T (Noche)</span>
+    </div>
+    """
+    html += "<div style='display:flex; margin-bottom:2px;'><div style='width:30px;'></div>"
+    for d in range(1, 32):
+        html += f"<div style='width:20px; text-align:center; color:#888;'>{d}</div>"
+    html += "</div>"
+    for m_idx, mes in enumerate(MESES):
+        m_num = m_idx + 1
+        days_in_month = calendar.monthrange(year, m_num)[1]
+        html += f"<div style='display:flex; margin-bottom:2px;'><div style='width:30px; font-weight:bold;'>{mes}</div>"
+        for d in range(1, 32):
+            if d <= days_in_month:
+                dt = datetime.date(year, m_num, d)
+                d_idx = dt.timetuple().tm_yday - 1
+                state = base_sch[team][d_idx]
+                final_val = state
+                if custom_schedule: final_val = custom_schedule[d_idx]
+                
+                bg_color = "#eee"; text_color = "#ccc"; border = "1px solid #fff"
+                
+                if str(final_val).startswith('T'): 
+                    bg_color = "#d4edda"; text_color = "#155724"
+                    if is_in_night_period(d_idx, year, night_periods):
+                        bg_color = "#1E7E34"; text_color = "white"
+                elif final_val == 'V':
+                    bg_color = "#FFC000"; text_color = "#000"
+                
+                if dt in get_night_transition_dates(night_periods): border = "2px solid red"
+                html += f"<div style='width:20px; background-color:{bg_color}; color:{text_color}; text-align:center; border:{border}; border-radius:2px;'>{state[0]}</div>"
+            else:
+                html += "<div style='width:20px;'></div>"
+        html += "</div>"
+    html += "</div>"
+    return html
 
 def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, night_periods, unavailable_map, adjustments_log_current_day=None):
     candidates = []
@@ -722,7 +813,7 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    if st.button("🎲 Rellenar Automático (Equilibrado)", type="primary"):
+    if st.button("🎲 Rellenar Automático (Estricto)", type="primary"):
         with st.spinner("Optimizando cuadrante (3 Rondas Estrictas: Bloques -> Rescate -> Relleno)..."):
             new_reqs = auto_generate_schedule(st.session_state.roster_data, year_val, st.session_state.nights, strategy_key, current_requests)
             if new_reqs:
