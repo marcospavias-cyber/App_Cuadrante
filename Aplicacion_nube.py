@@ -16,7 +16,7 @@ from operator import itemgetter
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V66.0 - Blindaje Turno A", page_icon="🚒")
+st.set_page_config(layout="wide", page_title="Gestor V1.0 - Classic Logic", page_icon="🚒")
 
 # --- ESTILOS VISUALES ---
 st.markdown("""
@@ -28,8 +28,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V66.0 (Regla Anti-Doblete Turno A)</h5>", unsafe_allow_html=True)
-st.title("🚒 Gestor de Cuadrantes: Cobertura Segura")
+st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V1.0 (Lógica Original Restaurada)</h5>", unsafe_allow_html=True)
+st.title("🚒 Gestor de Cuadrantes: Versión Clásica")
 
 TEAMS = ['A', 'B', 'C']
 MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
@@ -165,7 +165,7 @@ def book_slot_gen(start_idx, duration, person, occupation_map):
         if i not in occupation_map: occupation_map[i] = []
         occupation_map[i].append(person)
 
-# --- DETECTOR DE CONFLICTOS ---
+# --- DETECTOR DE CONFLICTOS ORIGINAL ---
 def analyze_slot(start_idx, duration, person, occupation_map_T, base_sch, year, transition_dates, daily_absent, daily_roles):
     total_days = len(base_sch['A'])
     if start_idx + duration > total_days: return False, "Fuera de año", None
@@ -182,9 +182,7 @@ def analyze_slot(start_idx, duration, person, occupation_map_T, base_sch, year, 
         d_obj = datetime.date(year, 1, 1) + timedelta(days=i)
         if d_obj in transition_dates:
             if base_sch[person['Turno']][i] == 'T': 
-                # Si es C, permitimos (porque B le cubrirá). Si es A/B, bloqueamos.
-                if person['Turno'] != 'C':
-                    return False, "Conflicto Nocturna (Solo Turno C permitido)", "Nocturna"
+                return False, "Conflicto Nocturna (Día Transición)", "Nocturna"
         
         # 3. Turno
         occupants_T = occupation_map_T.get(i, [])
@@ -445,7 +443,7 @@ def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=
     html += "</div>"
     return html
 
-# --- BUSCADOR DE CANDIDATOS (INTELIGENTE) ---
+# --- BUSCADOR DE CANDIDATOS ORIGINAL (SIN REGLAS EXTRAS DE NOCHE) ---
 def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, night_periods, unavailable_map, adjustments_log_current_day=None):
     candidates = []
     missing_role = person_missing['Rol']
@@ -457,9 +455,7 @@ def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, n
             cov_p = roster_df[roster_df['Nombre'] == coverer_name]
             if not cov_p.empty: blocked_turns.add(cov_p.iloc[0]['Turno'])
             
-    # Chequeo si es Noche
-    is_in_night = is_in_night_period(day_idx, year, night_periods)
-
+    # Lógica de turno agotado por noche (solo esto se mantiene del original)
     turn_exhausted_from_night = None
     if day_idx > 0:
         prev_day_idx = day_idx - 1
@@ -473,11 +469,7 @@ def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, n
         cand_name = candidate['Nombre']
         cand_turn = candidate['Turno']
         
-        # --- REGLA: A NO CUBRE NOCHES DE C (EVITAR DOBLETE) ---
-        if is_in_night and missing_turn == 'C' and cand_turn == 'A':
-            continue 
-        # ------------------------------------------------------
-        
+        # Filtros básicos
         if cand_turn == missing_turn: continue
         if cand_name in unavailable_map[day_idx]: continue
         
@@ -487,6 +479,7 @@ def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, n
         if cand_turn in blocked_turns: continue
         if turn_exhausted_from_night and cand_turn == turn_exhausted_from_night: continue
         
+        # Regla Categoría (Respetada)
         is_compatible = False
         cand_role = candidate['Rol']
         if missing_role == "Jefe" and cand_role in ["Jefe", "Subjefe"]: is_compatible = True
@@ -533,10 +526,7 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
         if not absent_people: continue
         
         current_day_coverers = []
-        is_night = is_in_night_period(d, year, night_periods)
-        
-        # Prioridad Noche
-        absent_people.sort(key=lambda x: (0 if "C" in name_to_turn[x] and is_night else 1, 0 if "Jefe" in x else 1))
+        absent_people.sort(key=lambda x: 0 if "Jefe" in x or "Subjefe" in x else 1)
 
         for name_missing in absent_people:
             person_row = roster_df[roster_df['Nombre'] == name_missing].iloc[0]
@@ -550,19 +540,11 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
                 for c in candidates:
                     prev = final_schedule[c][d-1] if d > 0 else 'L'
                     next_day = final_schedule[c][d+1] if d < total_days-1 else 'L'
-                    
-                    # SI ES NOCHE C, SE PERMITE DOBLAR (Para que B pueda cubrir)
-                    if is_night and name_to_turn[name_missing] == 'C':
-                         valid.append(c)
-                    else:
-                        if not (str(prev).startswith('T') or str(next_day).startswith('T')): valid.append(c)
+                    if not (str(prev).startswith('T') or str(next_day).startswith('T')): 
+                        valid.append(c)
                         
                 if valid:
-                    valid.sort(key=lambda x: (
-                        turn_coverage_counters[name_to_turn[x]], 
-                        person_coverage_counters[x], 
-                        random.random()
-                    ))
+                    valid.sort(key=lambda x: (turn_coverage_counters[name_to_turn[x]], person_coverage_counters[x], random.random()))
                     chosen = valid[0]
                     final_schedule[chosen][d] = f"T*({name_missing})"
                     adjustments_log.append((d, chosen, name_missing))
@@ -571,9 +553,10 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
                     turn_coverage_counters[name_to_turn[chosen]] += 1
                     person_coverage_counters[chosen] += 1
             else:
+                # Si no hay candidatos, se marca como no cubierto visualmente (sin bloquear)
                 final_schedule[name_missing][d] = "V(⚠)"
 
-    # Relleno
+    # Relleno de francotiradores/sobrantes original
     fill_log = {}
     for name in roster_df['Nombre']:
         current = natural_days_count.get(name, 0)
@@ -595,6 +578,7 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
     s_L = PatternFill("solid", fgColor="F2F2F2"); s_Night = PatternFill("solid", fgColor="A6A6A6")
     s_Extra = PatternFill("solid", fgColor="ADD8E6"); s_Free = PatternFill("solid", fgColor="E6E6FA")
     s_VL = PatternFill("solid", fgColor="FFE699"); s_Alert = PatternFill("solid", fgColor="FF0000")
+    
     font_bold = Font(bold=True); font_red = Font(color="9C0006", bold=True)
     align_c = Alignment(horizontal="center", vertical="center")
     border_thin = Side(border_style="thin", color="000000")
@@ -624,7 +608,7 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
                         dt = datetime.date(year, m_idx+1, d); d_y = dt.timetuple().tm_yday - 1
                         st_val = schedule[nm][d_y]
                         
-                        # LOGICA COLORES: Alerta primero
+                        # Prioridad de color: Alerta > Noche > Normal
                         fill = s_L
                         if is_in_night_period(d_y, year, night_periods): fill = s_Night
                         
@@ -640,7 +624,7 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
                             val = get_short_id(cov_p['Nombre'], cov_p['Rol'], cov_p['Turno'])
                         elif st_val == 'T+': fill = s_Extra; val = "T+"
                         elif st_val == 'L*': fill = s_Free; val = "L"
-                        elif st_val == 'V(⚠)': fill = s_Alert; val = "⚠" # Gana al gris
+                        elif st_val == 'V(⚠)': fill = s_Alert; val = "⚠" # Gana al fondo gris
                         
                         cell.fill = fill; cell.value = val
                     else: cell.fill = PatternFill("solid", fgColor="808080")
@@ -726,8 +710,8 @@ with st.sidebar:
         st.session_state.raw_requests_df = pd.DataFrame(columns=["Nombre", "Inicio", "Fin"]); st.rerun()
 
     st.markdown("---")
-    if st.button("🎲 Rellenar Automático (Estricto)", type="primary"):
-        with st.spinner("Optimizando cuadrante (C-Night + B-Cover Block A)..."):
+    if st.button("🎲 Rellenar Automático (Classic)", type="primary"):
+        with st.spinner("Optimizando cuadrante (Original Logic)..."):
             new_reqs = auto_generate_schedule(st.session_state.roster_data, year_val, st.session_state.nights, strategy_key, current_requests)
             if new_reqs:
                 df_new = pd.DataFrame(new_reqs)
