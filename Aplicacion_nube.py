@@ -16,7 +16,7 @@ from operator import itemgetter
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V60.0 - Priority B", page_icon="🚒")
+st.set_page_config(layout="wide", page_title="Gestor V61.0 - Strict C-Night Rules", page_icon="🚒")
 
 # --- ESTILOS VISUALES ---
 st.markdown("""
@@ -28,7 +28,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V60.0 (Priority B Coverage)</h5>", unsafe_allow_html=True)
+st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V61.0 (Strict C-Night Coverage)</h5>", unsafe_allow_html=True)
 st.title("🚒 Gestor de Cuadrantes: Versión Definitiva")
 
 TEAMS = ['A', 'B', 'C']
@@ -249,7 +249,7 @@ def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current
     RECIPE = STRATEGIES[strategy_key]['auto_recipe']
     
     # ==============================================================================
-    # RONDA 1: ESTRATEGIA PRINCIPAL (Ahora Turno C puede pillar Noches)
+    # RONDA 1: ESTRATEGIA PRINCIPAL
     # ==============================================================================
     random.shuffle(people)
     
@@ -505,7 +505,7 @@ def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=
     html += "</div>"
     return html
 
-# --- BUSCADOR DE CANDIDATOS (PRIORIDAD AL B) ---
+# --- BUSCADOR DE CANDIDATOS (MODIFICADO: REGLA ESTRICTA C-NOCHE-B) ---
 def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, night_periods, unavailable_map, adjustments_log_current_day=None):
     candidates = []
     missing_role = person_missing['Rol']
@@ -517,10 +517,8 @@ def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, n
             cov_p = roster_df[roster_df['Nombre'] == coverer_name]
             if not cov_p.empty: blocked_turns.add(cov_p.iloc[0]['Turno'])
             
-    # Chequeo si es día de Transición Nocturna
-    # transition_dates = get_night_transition_dates(night_periods)
-    # current_date = datetime.date(year, 1, 1) + datetime.timedelta(days=day_idx)
-    # is_transition_day = (current_date in transition_dates)
+    # Detección de Noche
+    is_in_night = is_in_night_period(day_idx, year, night_periods)
 
     turn_exhausted_from_night = None
     if day_idx > 0:
@@ -534,6 +532,12 @@ def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, n
     for _, candidate in roster_df.iterrows():
         cand_name = candidate['Nombre']
         cand_turn = candidate['Turno']
+        
+        # --- REGLA CRÍTICA: SI FALTA C EN NOCHE, SOLO B CUBRE ---
+        if missing_turn == 'C' and is_in_night:
+            if cand_turn == 'A': continue # A prohibido por "doblar noche-dia"
+            if cand_turn != 'B': continue # Solo aceptamos B
+        # ---------------------------------------------------------
         
         if cand_turn == missing_turn: continue
         if cand_name in unavailable_map[day_idx]: continue
@@ -586,18 +590,15 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
 
     adjustments_log = []
     
-    # 2. Asignar Coberturas
-    transition_dates = get_night_transition_dates(night_periods)
-    
     for d in range(total_days):
         absent_people = day_vacations[d]
         if not absent_people: continue
         
         current_day_coverers = []
-        current_date = datetime.date(year, 1, 1) + timedelta(days=d)
-        is_crit_night = (current_date in transition_dates)
+        is_night = is_in_night_period(d, year, night_periods)
         
-        absent_people.sort(key=lambda x: (0 if "C" in name_to_turn[x] and is_crit_night else 1, 0 if "Jefe" in x else 1))
+        # Prioridad: Si falta C en Noche, resolver primero porque es restrictivo
+        absent_people.sort(key=lambda x: (0 if "C" in name_to_turn[x] and is_night else 1, 0 if "Jefe" in x else 1))
 
         for name_missing in absent_people:
             person_row = roster_df[roster_df['Nombre'] == name_missing].iloc[0]
@@ -612,25 +613,15 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
                     prev = final_schedule[c][d-1] if d > 0 else 'L'
                     next_day = final_schedule[c][d+1] if d < total_days-1 else 'L'
                     
-                    # Si es noche critica del C, permitimos doblar si es necesario (flexibilidad operativa)
-                    # Si no, aplicamos regla estricta de descanso
-                    if is_crit_night and name_to_turn[name_missing] == 'C':
+                    # Relajación operativa si es Noche C (Solo nos queda B, a veces doblará)
+                    if is_night and name_to_turn[name_missing] == 'C':
                          valid.append(c)
                     else:
                         if not (str(prev).startswith('T') or str(next_day).startswith('T')):
                             valid.append(c)
                         
                 if valid:
-                    # PRIORIDAD B: Si es noche critica del C, el B va primero
-                    is_c_night_coverage = (name_to_turn[name_missing] == 'C' and is_crit_night)
-                    
-                    valid.sort(key=lambda x: (
-                        0 if (is_c_night_coverage and name_to_turn[x] == 'B') else 1,
-                        turn_coverage_counters[name_to_turn[x]], 
-                        person_coverage_counters[x], 
-                        random.random()
-                    ))
-                    
+                    valid.sort(key=lambda x: (turn_coverage_counters[name_to_turn[x]], person_coverage_counters[x], random.random()))
                     chosen = valid[0]
                     final_schedule[chosen][d] = f"T*({name_missing})"
                     adjustments_log.append((d, chosen, name_missing))
@@ -639,7 +630,7 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
                     turn_coverage_counters[name_to_turn[chosen]] += 1
                     person_coverage_counters[chosen] += 1
             else:
-                if is_crit_night and name_to_turn[name_missing] == 'C':
+                if is_night and name_to_turn[name_missing] == 'C':
                     final_schedule[name_missing][d] = "V(⚠)" 
 
     # Relleno de francotiradores/sobrantes original
