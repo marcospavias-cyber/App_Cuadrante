@@ -16,7 +16,7 @@ from operator import itemgetter
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V59.0 - Critical Alert", page_icon="🚒")
+st.set_page_config(layout="wide", page_title="Gestor V60.0 - Priority B", page_icon="🚒")
 
 # --- ESTILOS VISUALES ---
 st.markdown("""
@@ -28,7 +28,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V59.0 (Critical Night Alert)</h5>", unsafe_allow_html=True)
+st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V60.0 (Priority B Coverage)</h5>", unsafe_allow_html=True)
 st.title("🚒 Gestor de Cuadrantes: Versión Definitiva")
 
 TEAMS = ['A', 'B', 'C']
@@ -165,7 +165,7 @@ def book_slot_gen(start_idx, duration, person, occupation_map):
         if i not in occupation_map: occupation_map[i] = []
         occupation_map[i].append(person)
 
-# --- DETECTOR DE CONFLICTOS (MODIFICADO: PERMISO PARA TURNO C) ---
+# --- DETECTOR DE CONFLICTOS (PERMISO PARA TURNO C EN NOCHES) ---
 def analyze_slot(start_idx, duration, person, occupation_map_T, base_sch, year, transition_dates, daily_absent, daily_roles):
     total_days = len(base_sch['A'])
     if start_idx + duration > total_days: return False, "Fuera de año", None
@@ -185,7 +185,6 @@ def analyze_slot(start_idx, duration, person, occupation_map_T, base_sch, year, 
                 # NUEVA REGLA: Si es turno C, se permite. Si es A o B, se bloquea.
                 if person['Turno'] != 'C':
                     return False, "Conflicto Nocturna (Solo Turno C permitido)", "Nocturna"
-                # Si es turno C, pasa (True)
         
         # 3. REGLA TURNO
         occupants_T = occupation_map_T.get(i, [])
@@ -205,7 +204,7 @@ def analyze_slot(start_idx, duration, person, occupation_map_T, base_sch, year, 
     return True, "OK", None
 
 # ==============================================================================
-# 3. ALGORITMO GENERADOR (ESTRICTO Y DEMOCRÁTICO)
+# 3. ALGORITMO GENERADOR (ESTRICTO, DEMOCRÁTICO Y EXHAUSTIVO)
 # ==============================================================================
 
 def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current_reqs):
@@ -506,7 +505,7 @@ def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=
     html += "</div>"
     return html
 
-# --- BUSCADOR DE CANDIDATOS (MODIFICADO: REGLA B CUBRE C EN NOCHES) ---
+# --- BUSCADOR DE CANDIDATOS (PRIORIDAD AL B) ---
 def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, night_periods, unavailable_map, adjustments_log_current_day=None):
     candidates = []
     missing_role = person_missing['Rol']
@@ -519,9 +518,9 @@ def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, n
             if not cov_p.empty: blocked_turns.add(cov_p.iloc[0]['Turno'])
             
     # Chequeo si es día de Transición Nocturna
-    transition_dates = get_night_transition_dates(night_periods)
-    current_date = datetime.date(year, 1, 1) + datetime.timedelta(days=day_idx)
-    is_transition_day = (current_date in transition_dates)
+    # transition_dates = get_night_transition_dates(night_periods)
+    # current_date = datetime.date(year, 1, 1) + datetime.timedelta(days=day_idx)
+    # is_transition_day = (current_date in transition_dates)
 
     turn_exhausted_from_night = None
     if day_idx > 0:
@@ -535,10 +534,6 @@ def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, n
     for _, candidate in roster_df.iterrows():
         cand_name = candidate['Nombre']
         cand_turn = candidate['Turno']
-        
-        # FILTRO SUPREMO: Si falta C en Noche, SOLO B puede cubrir
-        if is_transition_day and missing_turn == 'C':
-            if cand_turn != 'B': continue
         
         if cand_turn == missing_turn: continue
         if cand_name in unavailable_map[day_idx]: continue
@@ -592,7 +587,6 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
     adjustments_log = []
     
     # 2. Asignar Coberturas
-    # En días de transición, buscamos candidatos específicos
     transition_dates = get_night_transition_dates(night_periods)
     
     for d in range(total_days):
@@ -600,7 +594,6 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
         if not absent_people: continue
         
         current_day_coverers = []
-        # Si es noche crítica, intentamos cubrir primero a C
         current_date = datetime.date(year, 1, 1) + timedelta(days=d)
         is_crit_night = (current_date in transition_dates)
         
@@ -616,12 +609,11 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
             if candidates:
                 valid = []
                 for c in candidates:
-                    # En cobertura forzosa nocturna (B cubre C), relajamos regla descanso si es necesario
-                    # Pero intentamos mantenerla por defecto
                     prev = final_schedule[c][d-1] if d > 0 else 'L'
                     next_day = final_schedule[c][d+1] if d < total_days-1 else 'L'
                     
-                    # Si estamos en noche critica cubriendo a C, se permite doblar (excepcion operativa)
+                    # Si es noche critica del C, permitimos doblar si es necesario (flexibilidad operativa)
+                    # Si no, aplicamos regla estricta de descanso
                     if is_crit_night and name_to_turn[name_missing] == 'C':
                          valid.append(c)
                     else:
@@ -629,7 +621,16 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
                             valid.append(c)
                         
                 if valid:
-                    valid.sort(key=lambda x: (turn_coverage_counters[name_to_turn[x]], person_coverage_counters[x], random.random()))
+                    # PRIORIDAD B: Si es noche critica del C, el B va primero
+                    is_c_night_coverage = (name_to_turn[name_missing] == 'C' and is_crit_night)
+                    
+                    valid.sort(key=lambda x: (
+                        0 if (is_c_night_coverage and name_to_turn[x] == 'B') else 1,
+                        turn_coverage_counters[name_to_turn[x]], 
+                        person_coverage_counters[x], 
+                        random.random()
+                    ))
+                    
                     chosen = valid[0]
                     final_schedule[chosen][d] = f"T*({name_missing})"
                     adjustments_log.append((d, chosen, name_missing))
@@ -638,9 +639,8 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
                     turn_coverage_counters[name_to_turn[chosen]] += 1
                     person_coverage_counters[chosen] += 1
             else:
-                # Si no hay candidato y es noche critica del C, marcar en rojo
                 if is_crit_night and name_to_turn[name_missing] == 'C':
-                    final_schedule[name_missing][d] = "V(⚠)" # Marca visual de fallo
+                    final_schedule[name_missing][d] = "V(⚠)" 
 
     # Relleno de francotiradores/sobrantes original
     fill_log = {}
@@ -844,7 +844,7 @@ with st.sidebar:
 
     st.markdown("---")
     if st.button("🎲 Rellenar Automático (Estricto)", type="primary"):
-        with st.spinner("Optimizando cuadrante (3 Rondas Estrictas: Bloques -> Rescate -> Relleno)..."):
+        with st.spinner("Optimizando cuadrante (C-Night + B-Cover)..."):
             new_reqs = auto_generate_schedule(st.session_state.roster_data, year_val, st.session_state.nights, strategy_key, current_requests)
             if new_reqs:
                 df_new = pd.DataFrame(new_reqs)
