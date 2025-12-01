@@ -16,7 +16,7 @@ from operator import itemgetter
 # 1. CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
 
-st.set_page_config(layout="wide", page_title="Gestor V1.0 - Classic Logic", page_icon="🚒")
+st.set_page_config(layout="wide", page_title="Gestor V67.0 - Classic Coverage", page_icon="🚒")
 
 # --- ESTILOS VISUALES ---
 st.markdown("""
@@ -28,8 +28,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V1.0 (Lógica Original Restaurada)</h5>", unsafe_allow_html=True)
-st.title("🚒 Gestor de Cuadrantes: Versión Clásica")
+st.markdown("<h5 style='text-align: center; color: #888;'>Arquitectura de Precisión - V67.0 (Generador V55 + Coberturas V52)</h5>", unsafe_allow_html=True)
+st.title("🚒 Gestor de Cuadrantes: Versión Híbrida")
 
 TEAMS = ['A', 'B', 'C']
 MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
@@ -165,7 +165,7 @@ def book_slot_gen(start_idx, duration, person, occupation_map):
         if i not in occupation_map: occupation_map[i] = []
         occupation_map[i].append(person)
 
-# --- DETECTOR DE CONFLICTOS ORIGINAL ---
+# --- DETECTOR DE CONFLICTOS ---
 def analyze_slot(start_idx, duration, person, occupation_map_T, base_sch, year, transition_dates, daily_absent, daily_roles):
     total_days = len(base_sch['A'])
     if start_idx + duration > total_days: return False, "Fuera de año", None
@@ -202,7 +202,7 @@ def analyze_slot(start_idx, duration, person, occupation_map_T, base_sch, year, 
     return True, "OK", None
 
 # ==============================================================================
-# 3. ALGORITMO GENERADOR (ESTRICTO)
+# 3. ALGORITMO GENERADOR (ESTRICTO - V55)
 # ==============================================================================
 
 def auto_generate_schedule(roster_df, year, night_periods, strategy_key, current_reqs):
@@ -443,7 +443,7 @@ def render_annual_calendar(year, team, base_sch, night_periods, custom_schedule=
     html += "</div>"
     return html
 
-# --- BUSCADOR DE CANDIDATOS ORIGINAL (SIN REGLAS EXTRAS DE NOCHE) ---
+# --- BUSCADOR DE CANDIDATOS (LOGICA V52.0 RESTAURADA) ---
 def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, night_periods, unavailable_map, adjustments_log_current_day=None):
     candidates = []
     missing_role = person_missing['Rol']
@@ -455,7 +455,6 @@ def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, n
             cov_p = roster_df[roster_df['Nombre'] == coverer_name]
             if not cov_p.empty: blocked_turns.add(cov_p.iloc[0]['Turno'])
             
-    # Lógica de turno agotado por noche (solo esto se mantiene del original)
     turn_exhausted_from_night = None
     if day_idx > 0:
         prev_day_idx = day_idx - 1
@@ -467,19 +466,16 @@ def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, n
                     
     for _, candidate in roster_df.iterrows():
         cand_name = candidate['Nombre']
-        cand_turn = candidate['Turno']
         
-        # Filtros básicos
-        if cand_turn == missing_turn: continue
+        if candidate['Turno'] == missing_turn: continue
         if cand_name in unavailable_map[day_idx]: continue
         
         cand_status = current_schedule[cand_name][day_idx]
         if cand_status != 'L': continue 
         
-        if cand_turn in blocked_turns: continue
-        if turn_exhausted_from_night and cand_turn == turn_exhausted_from_night: continue
+        if candidate['Turno'] in blocked_turns: continue
+        if turn_exhausted_from_night and candidate['Turno'] == turn_exhausted_from_night: continue
         
-        # Regla Categoría (Respetada)
         is_compatible = False
         cand_role = candidate['Rol']
         if missing_role == "Jefe" and cand_role in ["Jefe", "Subjefe"]: is_compatible = True
@@ -491,6 +487,7 @@ def get_candidates(person_missing, roster_df, day_idx, current_schedule, year, n
         
     return candidates
 
+# --- ASIGNADOR (LOGICA V52.0 RESTAURADA) ---
 def validate_and_generate_final(roster_df, requests, year, night_periods, strategy_key="standard"):
     base_schedule_turn, total_days = generate_base_schedule(year)
     final_schedule = {} 
@@ -511,6 +508,7 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
         e_idx = req['Fin'].timetuple().tm_yday - 1
         duration = (e_idx - s_idx) + 1
         natural_days_count[name] += duration
+        
         for d in range(s_idx, e_idx + 1):
             unavailable_map[d].add(name)
             if final_schedule[name][d] == 'T':
@@ -539,8 +537,10 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
                 valid = []
                 for c in candidates:
                     prev = final_schedule[c][d-1] if d > 0 else 'L'
-                    next_day = final_schedule[c][d+1] if d < total_days-1 else 'L'
-                    if not (str(prev).startswith('T') or str(next_day).startswith('T')): 
+                    prev2 = final_schedule[c][d-2] if d > 1 else 'L'
+                    worked_prev = prev.startswith('T')
+                    worked_prev2 = prev2.startswith('T')
+                    if not (worked_prev and worked_prev2): 
                         valid.append(c)
                         
                 if valid:
@@ -553,7 +553,6 @@ def validate_and_generate_final(roster_df, requests, year, night_periods, strate
                     turn_coverage_counters[name_to_turn[chosen]] += 1
                     person_coverage_counters[chosen] += 1
             else:
-                # Si no hay candidatos, se marca como no cubierto visualmente (sin bloquear)
                 final_schedule[name_missing][d] = "V(⚠)"
 
     # Relleno de francotiradores/sobrantes original
@@ -578,7 +577,6 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
     s_L = PatternFill("solid", fgColor="F2F2F2"); s_Night = PatternFill("solid", fgColor="A6A6A6")
     s_Extra = PatternFill("solid", fgColor="ADD8E6"); s_Free = PatternFill("solid", fgColor="E6E6FA")
     s_VL = PatternFill("solid", fgColor="FFE699"); s_Alert = PatternFill("solid", fgColor="FF0000")
-    
     font_bold = Font(bold=True); font_red = Font(color="9C0006", bold=True)
     align_c = Alignment(horizontal="center", vertical="center")
     border_thin = Side(border_style="thin", color="000000")
@@ -607,11 +605,8 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
                     if d <= d_month:
                         dt = datetime.date(year, m_idx+1, d); d_y = dt.timetuple().tm_yday - 1
                         st_val = schedule[nm][d_y]
-                        
-                        # Prioridad de color: Alerta > Noche > Normal
                         fill = s_L
                         if is_in_night_period(d_y, year, night_periods): fill = s_Night
-                        
                         val = ""
                         if st_val == 'T': fill = s_T; val = "T"
                         elif st_val == 'V': fill = s_V; val = "V"
@@ -624,8 +619,7 @@ def create_final_excel(schedule, roster_df, year, requests, fill_log, counters, 
                             val = get_short_id(cov_p['Nombre'], cov_p['Rol'], cov_p['Turno'])
                         elif st_val == 'T+': fill = s_Extra; val = "T+"
                         elif st_val == 'L*': fill = s_Free; val = "L"
-                        elif st_val == 'V(⚠)': fill = s_Alert; val = "⚠" # Gana al fondo gris
-                        
+                        elif st_val == 'V(⚠)': fill = s_Alert; val = "⚠"
                         cell.fill = fill; cell.value = val
                     else: cell.fill = PatternFill("solid", fgColor="808080")
                 curr_row += 1
@@ -710,8 +704,8 @@ with st.sidebar:
         st.session_state.raw_requests_df = pd.DataFrame(columns=["Nombre", "Inicio", "Fin"]); st.rerun()
 
     st.markdown("---")
-    if st.button("🎲 Rellenar Automático (Classic)", type="primary"):
-        with st.spinner("Optimizando cuadrante (Original Logic)..."):
+    if st.button("🎲 Rellenar Automático (Classic Mode)", type="primary"):
+        with st.spinner("Optimizando cuadrante (Generador V55 + Cobertura V52)..."):
             new_reqs = auto_generate_schedule(st.session_state.roster_data, year_val, st.session_state.nights, strategy_key, current_requests)
             if new_reqs:
                 df_new = pd.DataFrame(new_reqs)
