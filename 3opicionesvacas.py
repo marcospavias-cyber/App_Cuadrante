@@ -1195,3 +1195,4 @@ if st.session_state.locked_result:
 
 st.markdown("---")
 st.markdown("<h5 style='text-align: center; color: #888;'>Diseñado por Marcos Esteban Vives</h5>", unsafe_allow_html=True)
+
