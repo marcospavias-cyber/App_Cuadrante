@@ -1,14 +1,12 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 
 # Configuración de la página
-st.set_page_config(page_title="Buscador de Rutas", layout="wide")
+st.set_page_config(page_title="Gestor de Rutas", layout="wide")
 
-st.title("📊 Visor de Rutas y Tarifas")
+st.title("📝 Gestor de Partes de Ruta")
 
-# --- DATOS INTEGRADOS (No se requiere subir archivo) ---
-# Estos datos provienen de tu archivo 'hoja calculo rutas.xlsx - rutas.csv'
+# --- 1. DATOS INTEGRADOS ---
 DATOS_RUTAS = [
     {'layer': 'R1-1', 'ESTADO': 'CERRADA', 'HIELO': None, 'ACTUACION': 'SALERO', 'RUTA': 1, 'TRAMO': '1º', 'RECORRIDO': 'CV108 Ballestar a CV107 La Pobla de Benifassar'},
     {'layer': 'R1-2', 'ESTADO': 'CADENAS', 'HIELO': 'HIELO', 'ACTUACION': 'CUCHILLA', 'RUTA': 1, 'TRAMO': '2º', 'RECORRIDO': 'CV105 cruce CV107 a La Senia'},
@@ -89,76 +87,112 @@ DATOS_RUTAS = [
     {'layer': 'R9-3', 'ESTADO': None, 'HIELO': None, 'ACTUACION': None, 'RUTA': 9, 'TRAMO': '3º', 'RECORRIDO': 'CV 1720 de cruce CV170 a Sierra del Boi'}
 ]
 
+# Inicializamos DataFrames
 @st.cache_data
-def cargar_datos():
-    # Creamos el DataFrame directamente desde la variable
-    df = pd.DataFrame(DATOS_RUTAS)
-    return df
+def obtener_dataframes():
+    df_base = pd.DataFrame(DATOS_RUTAS)
+    return df_base
 
-df = cargar_datos()
+df = obtener_dataframes()
 
-if df is not None:
-    # --- DEFINICIÓN DE COLUMNAS ---
-    # Usamos los nombres reales del CSV en lugar de índices (A, B, C...)
-    col_A = 'layer'       # Input búsqueda
-    col_B = 'ESTADO'      # Filtro 1
-    col_C = 'HIELO'       # Filtro 2
-    col_G = 'ACTUACION'   # Filtro 3
+# Inicializar sesión para guardar datos añadidos
+if 'seleccionados' not in st.session_state:
+    st.session_state['seleccionados'] = pd.DataFrame(columns=['layer', 'RUTA', 'TRAMO', 'ESTADO', 'HIELO', 'ACTUACION', 'RECORRIDO'])
+
+# --- 2. ÁREA DE SELECCIÓN Y EDICIÓN ---
+
+# Opciones para los desplegables (sacadas de todos los valores posibles del CSV)
+opciones_estado = [x for x in df['ESTADO'].unique() if pd.notna(x)] + ["SIN INCIDENCIAS"]
+opciones_hielo = [x for x in df['HIELO'].unique() if pd.notna(x)] + ["NO"]
+opciones_actuacion = [x for x in df['ACTUACION'].unique() if pd.notna(x)] + ["NINGUNA"]
+
+with st.container(border=True):
+    st.subheader("1. Seleccionar Tramo")
     
-    col_J = 'RUTA'        # Info Relacionada
-    col_K = 'TRAMO'       # Info Relacionada
-    col_N = 'RECORRIDO'   # Resultado (Output)
+    # Selector principal (Columna A - layer)
+    # Creamos una etiqueta amigable que combine Layer + Recorrido
+    df['label_combo'] = df['layer'] + " | " + df['RECORRIDO']
     
-    # Columnas fijas a visualizar
-    cols_visualizar = [col_A, col_J, col_K, col_N]
-
-    # --- BARRA LATERAL (FILTROS) ---
-    st.sidebar.header("🔍 Filtros")
-
-    def obtener_opciones(columna):
-        # Filtramos valores nulos (None/NaN) y convertimos a string
-        opciones = df[columna].dropna().astype(str).unique().tolist()
-        opciones.sort()
-        return ["Todos"] + opciones
-
-    filtro_B = st.sidebar.selectbox(f"Filtrar por {col_B}", obtener_opciones(col_B))
-    filtro_C = st.sidebar.selectbox(f"Filtrar por {col_C}", obtener_opciones(col_C))
-    filtro_G = st.sidebar.selectbox(f"Filtrar por {col_G}", obtener_opciones(col_G))
-
-    # --- ÁREA PRINCIPAL ---
-
-    st.markdown(f"### Buscar por {col_A}")
-    busqueda_A = st.text_input(f"Escribe el valor de {col_A} (ej. R1-2)", "")
-
-    # --- LÓGICA DE FILTRADO ---
-    df_filtrado = df.copy()
-
-    # Aplicar filtros de desplegables
-    if filtro_B != "Todos":
-        df_filtrado = df_filtrado[df_filtrado[col_B].astype(str) == filtro_B]
+    seleccion_usuario = st.selectbox("Elige la Ruta/Capa:", df['label_combo'].tolist())
     
-    if filtro_C != "Todos":
-        df_filtrado = df_filtrado[df_filtrado[col_C].astype(str) == filtro_C]
-
-    if filtro_G != "Todos":
-        df_filtrado = df_filtrado[df_filtrado[col_G].astype(str) == filtro_G]
-
-    # Aplicar filtro de texto (Columna A - layer)
-    if busqueda_A:
-        df_filtrado = df_filtrado[df_filtrado[col_A].astype(str).str.contains(busqueda_A, case=False, na=False)]
-
-    # --- MOSTRAR RESULTADOS ---
+    # Recuperamos los datos de la fila seleccionada
+    fila_datos = df[df['label_combo'] == seleccion_usuario].iloc[0]
+    
     st.divider()
-    st.subheader("Resultados")
     
-    if not df_filtrado.empty:
-        st.dataframe(df_filtrado[cols_visualizar], use_container_width=True, hide_index=True)
-    else:
-        st.info("No hay datos para mostrar con los filtros actuales.")
+    # Formulario para rellenar datos
+    with st.form("form_ruta"):
+        st.subheader("2. Rellenar Estado")
+        
+        # Columnas fijas (Información no editable)
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.info(f"**Ruta:** {fila_datos['RUTA']}")
+        with col2:
+            st.info(f"**Tramo:** {fila_datos['TRAMO']}")
+        with col3:
+            st.info(f"**Recorrido:** {fila_datos['RECORRIDO']}")
+            
+        st.markdown("---")
+        
+        # Columnas editables (Desplegables)
+        c_estado, c_hielo, c_actuacion = st.columns(3)
+        
+        with c_estado:
+            # Pre-seleccionar valor si existe, sino el primero
+            idx_est = 0
+            if pd.notna(fila_datos['ESTADO']) and fila_datos['ESTADO'] in opciones_estado:
+                idx_est = opciones_estado.index(fila_datos['ESTADO'])
+            val_estado = st.selectbox("Estado (Col B)", opciones_estado, index=idx_est)
+            
+        with c_hielo:
+            idx_hielo = 0
+            if pd.notna(fila_datos['HIELO']) and fila_datos['HIELO'] in opciones_hielo:
+                idx_hielo = opciones_hielo.index(fila_datos['HIELO'])
+            else:
+                 # Por defecto ponemos 'NO' si está vacío en el original
+                if "NO" in opciones_hielo: idx_hielo = opciones_hielo.index("NO")
+            val_hielo = st.selectbox("Hielo (Col C)", opciones_hielo, index=idx_hielo)
+            
+        with c_actuacion:
+            idx_act = 0
+            if pd.notna(fila_datos['ACTUACION']) and fila_datos['ACTUACION'] in opciones_actuacion:
+                idx_act = opciones_actuacion.index(fila_datos['ACTUACION'])
+            else:
+                if "NINGUNA" in opciones_actuacion: idx_act = opciones_actuacion.index("NINGUNA")
+            val_actuacion = st.selectbox("Actuación (Col G)", opciones_actuacion, index=idx_act)
 
-    # Destacar resultado único (Input A -> Output N)
-    if len(df_filtrado) == 1:
-        valor_N = df_filtrado.iloc[0][col_N]
-        st.success(f"📍 Resultado exacto en {col_N}: **{valor_N}**")
-    elif len(df_filtrado) == 0:
-        st.warning("No se encontraron resultados.")
+        # Botón de añadir
+        submit_btn = st.form_submit_button("➕ Añadir a la lista", type="primary")
+        
+        if submit_btn:
+            # Crear nueva fila
+            nueva_fila = {
+                'layer': fila_datos['layer'],
+                'RUTA': fila_datos['RUTA'],
+                'TRAMO': fila_datos['TRAMO'],
+                'ESTADO': val_estado,
+                'HIELO': val_hielo,
+                'ACTUACION': val_actuacion,
+                'RECORRIDO': fila_datos['RECORRIDO']
+            }
+            # Añadir a session_state usando pd.concat
+            st.session_state['seleccionados'] = pd.concat([st.session_state['seleccionados'], pd.DataFrame([nueva_fila])], ignore_index=True)
+            st.success("¡Tramo añadido correctamente!")
+
+# --- 3. TABLA DE RESULTADOS ACUMULADA ---
+st.subheader("📋 Rutas Añadidas")
+
+if not st.session_state['seleccionados'].empty:
+    st.dataframe(
+        st.session_state['seleccionados'], 
+        use_container_width=True,
+        hide_index=True
+    )
+    
+    # Botón para borrar la lista si te equivocas
+    if st.button("🗑️ Borrar todo"):
+        st.session_state['seleccionados'] = pd.DataFrame(columns=['layer', 'RUTA', 'TRAMO', 'ESTADO', 'HIELO', 'ACTUACION', 'RECORRIDO'])
+        st.rerun()
+else:
+    st.info("Aún no has añadido ninguna ruta.")
